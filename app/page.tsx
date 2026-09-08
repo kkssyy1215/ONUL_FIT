@@ -1,163 +1,510 @@
 'use client';
 
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import Image from 'next/image';
 import {
-  ArrowUpRight,
-  AudioLines,
+  ArrowRight,
+  BriefcaseBusiness,
   Check,
-  ChevronDown,
-  CircleHelp,
-  FlaskConical,
-  Mic,
-  Pause,
-  Play,
-  RotateCcw,
-  Send,
-  ShieldCheck,
-  Sparkles,
-  Waves,
+  CloudFog,
+  CloudLightning,
+  CloudRain,
+  CloudSnow,
+  CloudSun,
+  Droplets,
+  LocateFixed,
+  MapPin,
+  Plus,
+  RefreshCw,
+  Shirt,
+  Snowflake,
+  Sun,
+  Umbrella,
+  Wind,
 } from 'lucide-react';
 
-type Mode = 'selection' | 'text' | 'voice';
-type SelectionState = {
-  skinType: string;
-  sensitivity: string;
-  concerns: string[];
-  categories: string[];
-  budget: number;
-  finish: string;
-  avoidIngredients: string[];
-  swatch: string;
-  compare: Record<string, string>;
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+
+type WeatherKind = 'sun' | 'cloud' | 'rain' | 'snow' | 'storm' | 'fog';
+type WeatherData = {
+  location: string;
+  coordinates: { latitude: number; longitude: number };
+  updatedAt: string;
+  current: {
+    temperature: number;
+    apparentTemperature: number;
+    humidity: number;
+    precipitation: number;
+    precipitationProbability: number;
+    windSpeed: number;
+    weatherCode: number;
+    label: string;
+    kind: WeatherKind;
+    uvIndex: number;
+    uvLabel: string;
+  };
+  daily: { maxTemperature: number; minTemperature: number };
+  hourly: Array<{ time: string; kind: WeatherKind; label: string; temperature: number; precipitationProbability: number }>;
+  source: string;
 };
 
-const skinOptions = [
-  ['dry', '건성', '당김이 있고 쉽게 건조해져요'],
-  ['oily', '지성', '유분과 번들거림이 신경 쓰여요'],
-  ['combination', '복합성', '부위마다 컨디션이 달라요'],
-  ['normal', '중성', '큰 불편 없이 무난한 편이에요'],
-  ['unknown', '잘 모르겠어요', '지금 느끼는 고민만 알려주세요'],
+type Essential = { name: string; reason: string; priority: 'required' | 'recommended' };
+type Recommendation = {
+  headline: string;
+  description: string;
+  notice: string;
+  matchScore: number;
+  tags: string[];
+  essentials: Essential[];
+  outfitItems: string[];
+};
+
+type WardrobeItem = { id: string; name: string; category: string; color: string };
+type FormSubmitEvent = { preventDefault: () => void };
+type WeatherRequester = (query: string, coordinates?: { latitude: number; longitude: number }, overrides?: { gender?: 'female' | 'male'; style?: string; activity?: string; sensitivity?: string; wardrobe?: WardrobeItem[]; selectedItems?: string[] }) => Promise<WeatherData>;
+
+type ModelContext = {
+  registerTool: (
+    tool: {
+      name: string;
+      title: string;
+      description: string;
+      inputSchema: Record<string, unknown>;
+      annotations: { readOnlyHint: boolean; untrustedContentHint: boolean };
+      execute: (input: object) => Promise<unknown>;
+    },
+    options?: { signal?: AbortSignal },
+  ) => void | Promise<void>;
+};
+
+const defaultWeather: WeatherData = {
+  location: '서울',
+  coordinates: { latitude: 37.5665, longitude: 126.978 },
+  updatedAt: '--:--',
+  current: {
+    temperature: 21,
+    apparentTemperature: 20,
+    humidity: 68,
+    precipitation: 0,
+    precipitationProbability: 40,
+    windSpeed: 3.2,
+    weatherCode: 61,
+    label: '날씨를 확인하고 있어요',
+    kind: 'rain',
+    uvIndex: 4,
+    uvLabel: '보통',
+  },
+  daily: { maxTemperature: 24, minTemperature: 18 },
+  hourly: [
+    { time: '지금', kind: 'rain', label: '비', temperature: 21, precipitationProbability: 40 },
+    { time: '11시', kind: 'rain', label: '비', temperature: 22, precipitationProbability: 60 },
+    { time: '13시', kind: 'cloud', label: '흐림', temperature: 23, precipitationProbability: 30 },
+    { time: '15시', kind: 'sun', label: '맑음', temperature: 24, precipitationProbability: 10 },
+    { time: '18시', kind: 'cloud', label: '흐림', temperature: 21, precipitationProbability: 20 },
+    { time: '21시', kind: 'cloud', label: '흐림', temperature: 19, precipitationProbability: 20 },
+  ],
+  source: 'Open-Meteo',
+};
+
+const defaultRecommendation: Recommendation = {
+  headline: '날씨에 맞는 조합을 준비 중이에요',
+  description: '기온과 강수 가능성, 저장한 취향과 옷장을 함께 확인하고 있어요.',
+  notice: '외출 전에 최신 날씨를 한 번 더 확인하세요.',
+  matchScore: 88,
+  tags: ['미니멀', '출근', '간절기'],
+  essentials: [
+    { name: '접이식 우산', reason: '갑작스러운 비 대비', priority: 'required' },
+    { name: '얇은 겉옷', reason: '실내외 온도 차 대비', priority: 'recommended' },
+    { name: '작은 가방', reason: '준비물을 가볍게 보관', priority: 'recommended' },
+  ],
+  outfitItems: ['얇은 상의', '가벼운 아우터', '긴 바지', '스니커즈'],
+};
+
+const initialWardrobe: WardrobeItem[] = [
+  { id: 'rain-jacket', name: '네이비 레인 재킷', category: '아우터', color: '#263951' },
+  { id: 'cream-knit', name: '크림 코튼 니트', category: '상의', color: '#e8e2d3' },
+  { id: 'charcoal-pants', name: '차콜 스트레이트 팬츠', category: '하의', color: '#4b4d50' },
+  { id: 'white-sneakers', name: '화이트 스니커즈', category: '신발', color: '#f2f0ea' },
+  { id: 'linen-shirt', name: '블루 린넨 셔츠', category: '상의', color: '#9db7ca' },
+  { id: 'black-loafers', name: '블랙 로퍼', category: '신발', color: '#24272b' },
 ];
-const concerns = [['dryness', '건조함'], ['shine', '번들거림'], ['redness', '붉은기'], ['blemish', '트러블 흔적'], ['texture', '피부결'], ['dullness', '칙칙함']];
-const categories = [
-  ['moisturizer', '보습', '수분크림 · 에센스'], ['cleanser', '클렌저', '세안 · 순한 워시'], ['base', '베이스', '쿠션 · 파운데이션'],
-  ['lip', '립', '립스틱 · 틴트'], ['blush', '블러셔', '치크 · 멀티밤'], ['eye', '아이', '섀도 · 라이너'],
-];
-const swatches = [['S01', '#F3D3C6'], ['S02', '#EDB9A3'], ['S03', '#DDA084'], ['S04', '#C78269'], ['S05', '#A96F58'], ['S06', '#8E5B4E'], ['S07', '#72493F'], ['S08', '#B98291']];
-const budgets = [[10000, '1만원 이하'], [30000, '1–3만원'], [50000, '3–5만원'], [100000, '5만원 이상']];
-const finishes = [['natural', '자연스러움'], ['satin', '세미매트'], ['matte', '매트'], ['glowy', '광택감'], ['unknown', '모르겠어요']];
-const comparePairs = [['warmth_01', '색의 온도', '따뜻한 쪽', '차가운 쪽'], ['chroma_01', '선명도', '또렷한 쪽', '차분한 쪽'], ['depth_01', '밝기', '밝은 쪽', '깊은 쪽']];
-const compareChoices = [['left', '왼쪽'], ['right', '오른쪽'], ['similar', '비슷함'], ['unknown', '모르겠음']];
-const products = [
-  { category: 'base', label: '소프트 세미매트 쿠션', brand: 'tone / base', price: '₩28,000', tone: '웜 뉴트럴' },
-  { category: 'lip', label: '로즈 브릭 립 컬러', brand: 'tone / color', price: '₩19,000', tone: '차분한 장미빛' },
-  { category: 'moisturizer', label: '밸런싱 수분 크림', brand: 'tone / care', price: '₩24,000', tone: '가벼운 보습감' },
-];
+
+const styles = ['미니멀', '캐주얼', '오피스', '스트릿', '페미닌', '스포티'];
+const itemColors: Record<string, string> = { '상의': '#9db7ca', '하의': '#53585f', '아우터': '#263951', '신발': '#e9e5da', '액세서리': '#cf8a64' };
+
+const dateLabel = new Intl.DateTimeFormat('ko-KR', {
+  year: 'numeric', month: 'long', day: 'numeric', weekday: 'long', timeZone: 'Asia/Seoul',
+}).format(new Date());
 
 export default function Home() {
-  const [mode, setMode] = useState<Mode>('selection');
-  const [textInput, setTextInput] = useState('');
-  const [voiceText, setVoiceText] = useState('지성인데 볼은 건조하고, 너무 번들거리지 않는 쿠션과 차분한 장미빛 립을 추천해줘.');
-  const [recording, setRecording] = useState(false);
-  const [submitted, setSubmitted] = useState(false);
-  const [selection, setSelection] = useState<SelectionState>({
-    skinType: 'combination', sensitivity: 'sometimes', concerns: ['dryness', 'shine'], categories: ['base', 'lip'], budget: 30000,
-    finish: 'satin', avoidIngredients: [], swatch: 'S08', compare: { warmth_01: 'right', chroma_01: 'right', depth_01: 'similar' },
-  });
-  const recorderRef = useRef<MediaRecorder | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
+  const [weather, setWeather] = useState(defaultWeather);
+  const [recommendation, setRecommendation] = useState(defaultRecommendation);
+  const [locationInput, setLocationInput] = useState('서울');
+  const [gender, setGender] = useState<'female' | 'male'>('female');
+  const [style, setStyle] = useState('미니멀');
+  const [activity, setActivity] = useState('출근');
+  const [sensitivity, setSensitivity] = useState('보통');
+  const [wardrobe, setWardrobe] = useState(initialWardrobe);
+  const [selectedItems, setSelectedItems] = useState(initialWardrobe.slice(0, 4).map((item) => item.id));
+  const [newItemName, setNewItemName] = useState('');
+  const [newItemCategory, setNewItemCategory] = useState('상의');
+  const [showAddItem, setShowAddItem] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [message, setMessage] = useState('최신 날씨를 확인하고 있어요.');
+  const [storageReady, setStorageReady] = useState(false);
 
-  const inputPayload = useMemo(() => ({
-    schema_version: '2.0', input_mode: mode,
-    selection: {
-      skin_type: selection.skinType, sensitivity: selection.sensitivity, concerns: selection.concerns, swatch_id: selection.swatch,
-      compare_choices: Object.entries(selection.compare).map(([pair_id, choice]) => ({ pair_id, choice })), categories: selection.categories,
-      budget_krw: selection.budget, finish: selection.finish, avoid_ingredient_ids: selection.avoidIngredients, answer_style: 'realistic',
-    },
-    text: mode === 'text' ? textInput : mode === 'voice' ? voiceText : '',
-    voice: { transcript: mode === 'voice' ? voiceText : '', confidence: mode === 'voice' ? 0.94 : null, provider: mode === 'voice' ? 'web_server_stt' : null },
-  }), [mode, selection, textInput, voiceText]);
+  const requestRecommendation = useCallback(async (
+    nextWeather: WeatherData,
+    overrides?: { gender?: 'female' | 'male'; style?: string; activity?: string; sensitivity?: string; wardrobe?: WardrobeItem[]; selectedItems?: string[] },
+  ) => {
+    const nextWardrobe = overrides?.wardrobe ?? wardrobe;
+    const nextSelected = overrides?.selectedItems ?? selectedItems;
+    const response = await fetch('/api/recommend/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        weather: nextWeather,
+        profile: {
+          gender: overrides?.gender ?? gender,
+          style: overrides?.style ?? style,
+          activity: overrides?.activity ?? activity,
+          sensitivity: overrides?.sensitivity ?? sensitivity,
+        },
+        wardrobe: nextWardrobe.map((item) => ({ ...item, selected: nextSelected.includes(item.id) })),
+      }),
+    });
+    if (!response.ok) throw new Error('추천을 불러오지 못했어요.');
+    const result = await response.json() as { data: Recommendation };
+    setRecommendation(result.data);
+    return result.data;
+  }, [activity, gender, sensitivity, selectedItems, style, wardrobe]);
 
-  const chosenSkin = skinOptions.find(([value]) => value === selection.skinType)?.[1] ?? '미정';
-  const chosenFinish = finishes.find(([value]) => value === selection.finish)?.[1] ?? '미정';
-  const modeLabel = mode === 'selection' ? '빠른 선택' : mode === 'text' ? '자연어' : '음성';
-
-  function toggleList(key: 'concerns' | 'categories' | 'avoidIngredients', value: string) {
-    setSelection((current) => ({ ...current, [key]: current[key].includes(value) ? current[key].filter((item) => item !== value) : [...current[key], value] }));
-    setSubmitted(false);
-  }
-  function updateSelection(key: keyof SelectionState, value: string | number) {
-    setSelection((current) => ({ ...current, [key]: value })); setSubmitted(false);
-  }
-  function chooseCompare(pairId: string, value: string) {
-    setSelection((current) => ({ ...current, compare: { ...current.compare, [pairId]: value } })); setSubmitted(false);
-  }
-  async function toggleRecording() {
-    if (recording) {
-      recorderRef.current?.stop(); streamRef.current?.getTracks().forEach((track) => track.stop()); setRecording(false); return;
-    }
+  const requestWeather = useCallback(async (
+    query: string,
+    coordinates?: { latitude: number; longitude: number },
+    overrides?: { gender?: 'female' | 'male'; style?: string; activity?: string; sensitivity?: string; wardrobe?: WardrobeItem[]; selectedItems?: string[] },
+  ) => {
+    setIsLoading(true);
+    setMessage('날씨와 옷장을 함께 확인하고 있어요.');
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true }); streamRef.current = stream;
-      const recorder = new MediaRecorder(stream); recorderRef.current = recorder;
-      recorder.onstop = () => setVoiceText('지성인데 볼은 건조하고, 차분한 장미빛 립을 3만원 안에서 추천해줘.'); recorder.start(); setRecording(true);
-    } catch { setVoiceText('마이크 권한을 확인한 뒤, 아래 전사 문장을 직접 수정해 주세요.'); }
+      const params = new URLSearchParams({ location: query });
+      if (coordinates) {
+        params.set('lat', String(coordinates.latitude));
+        params.set('lon', String(coordinates.longitude));
+      }
+      const response = await fetch(`/api/weather/?${params.toString()}`);
+      const result = await response.json() as WeatherData & { message?: string };
+      if (!response.ok) throw new Error(result.message || '날씨를 불러오지 못했어요.');
+      setWeather(result);
+      setLocationInput(result.location);
+      await requestRecommendation(result, overrides);
+      setMessage(`${result.location} 날씨로 추천을 업데이트했어요.`);
+      return result;
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : '잠시 후 다시 시도해 주세요.');
+      throw error;
+    } finally {
+      setIsLoading(false);
+    }
+  }, [requestRecommendation]);
+
+  const requestWeatherRef = useRef<WeatherRequester>(requestWeather);
+  const recommendationRef = useRef(recommendation);
+
+  useEffect(() => {
+    requestWeatherRef.current = requestWeather;
+    recommendationRef.current = recommendation;
+  }, [recommendation, requestWeather]);
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem('onul-fit-preferences');
+    let nextGender: 'female' | 'male' = 'female';
+    let nextStyle = '미니멀';
+    let nextActivity = '출근';
+    let nextSensitivity = '보통';
+    let nextWardrobe = initialWardrobe;
+    let nextSelected = initialWardrobe.slice(0, 4).map((item) => item.id);
+    let nextLocation = '서울';
+
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved) as {
+          gender?: 'female' | 'male'; style?: string; activity?: string; sensitivity?: string;
+          wardrobe?: WardrobeItem[]; selectedItems?: string[]; location?: string;
+        };
+        nextGender = parsed.gender ?? nextGender;
+        nextStyle = parsed.style ?? nextStyle;
+        nextActivity = parsed.activity ?? nextActivity;
+        nextSensitivity = parsed.sensitivity ?? nextSensitivity;
+        nextWardrobe = parsed.wardrobe ?? nextWardrobe;
+        nextSelected = parsed.selectedItems ?? nextSelected;
+        nextLocation = parsed.location ?? nextLocation;
+        queueMicrotask(() => {
+          setGender(nextGender);
+          setStyle(nextStyle);
+          setActivity(nextActivity);
+          setSensitivity(nextSensitivity);
+          setWardrobe(nextWardrobe);
+          setSelectedItems(nextSelected);
+          setLocationInput(nextLocation);
+        });
+      } catch {
+        window.localStorage.removeItem('onul-fit-preferences');
+      }
+    }
+
+    queueMicrotask(() => setStorageReady(true));
+    void requestWeatherRef.current(nextLocation, undefined, {
+      gender: nextGender, style: nextStyle, activity: nextActivity, sensitivity: nextSensitivity,
+      wardrobe: nextWardrobe, selectedItems: nextSelected,
+    }).catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    if (!storageReady) return;
+    window.localStorage.setItem('onul-fit-preferences', JSON.stringify({
+      gender, style, activity, sensitivity, wardrobe, selectedItems, location: weather.location,
+    }));
+  }, [storageReady, gender, style, activity, sensitivity, wardrobe, selectedItems, weather.location]);
+
+  useEffect(() => {
+    const context = (document as Document & { modelContext?: ModelContext }).modelContext;
+    if (!context?.registerTool) return;
+    const lifecycle = new AbortController();
+
+    void Promise.resolve(context.registerTool({
+      name: 'refresh_today_fit',
+      title: '오늘핏 추천 새로 받기',
+      description: '지역을 지정해 최신 날씨와 현재 사용자 취향으로 오늘의 준비물과 옷차림 추천을 갱신합니다.',
+      inputSchema: {
+        type: 'object',
+        properties: { location: { type: 'string', description: '날씨를 확인할 한국의 도시 또는 동네 이름' } },
+        required: ['location'],
+        additionalProperties: false,
+      },
+      annotations: { readOnlyHint: false, untrustedContentHint: false },
+      async execute(input) {
+        const value = input as { location?: unknown };
+        if (typeof value.location !== 'string' || !value.location.trim()) throw new Error('location은 비어 있지 않은 문자열이어야 합니다.');
+        const result = await requestWeatherRef.current(value.location.trim());
+        return { location: result.location, temperature: result.current.temperature, recommendation: recommendationRef.current.headline };
+      },
+    }, { signal: lifecycle.signal })).catch(() => undefined);
+
+    return () => lifecycle.abort();
+  }, [gender, style, activity, sensitivity, wardrobe, selectedItems]);
+
+  async function updateLocation(event: FormSubmitEvent) {
+    event.preventDefault();
+    const nextLocation = locationInput.trim();
+    if (!nextLocation) return;
+    await requestWeather(nextLocation).catch(() => undefined);
   }
-  function reset() { setSubmitted(false); setMode('selection'); setTextInput(''); }
+
+  function useCurrentLocation() {
+    if (!navigator.geolocation) {
+      setMessage('이 브라우저에서는 현재 위치를 사용할 수 없어요.');
+      return;
+    }
+    setMessage('현재 위치를 확인하고 있어요.');
+    navigator.geolocation.getCurrentPosition(
+      (position) => void requestWeather('현재 위치', { latitude: position.coords.latitude, longitude: position.coords.longitude }).catch(() => undefined),
+      () => setMessage('위치 권한을 확인하거나 지역을 직접 입력해 주세요.'),
+      { enableHighAccuracy: false, timeout: 7_000, maximumAge: 600_000 },
+    );
+  }
+
+  function toggleWardrobe(id: string) {
+    setSelectedItems((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
+  }
+
+  function addWardrobeItem(event: FormSubmitEvent) {
+    event.preventDefault();
+    const name = newItemName.trim();
+    if (!name) return;
+    const id = `item-${Date.now()}`;
+    setWardrobe((current) => [...current, { id, name, category: newItemCategory, color: itemColors[newItemCategory] }]);
+    setSelectedItems((current) => [...current, id]);
+    setNewItemName('');
+    setShowAddItem(false);
+    setMessage(`${name}을(를) 내 옷장에 추가했어요.`);
+  }
+
+  async function refreshRecommendation() {
+    setIsLoading(true);
+    setMessage('저장한 취향으로 추천을 다시 만들고 있어요.');
+    try {
+      await requestRecommendation(weather);
+      setMessage('내 취향과 옷장을 반영했어요.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : '추천을 다시 만들지 못했어요.');
+    } finally {
+      setIsLoading(false);
+    }
+  }
 
   return (
-    <main className="tonepick-app">
-      <header className="topbar">
-        <div className="brand-lockup"><div className="brand-mark"><span /><span /><span /></div><div><div className="brand-name">tonepick</div><div className="brand-subtitle">RECOMMENDATION STUDIO <span>v2</span></div></div></div>
-        <div className="topbar-center"><span className="live-dot" /> live profile builder</div>
-        <div className="topbar-right"><span className="topbar-note">COSMETIC REFERENCE ONLY</span><button className="icon-button" aria-label="도움말"><CircleHelp size={18} /></button></div>
+    <main className={`onul-app ${isLoading ? 'is-loading' : ''}`}>
+      <header className="app-header">
+        <a className="brand" href="#top" aria-label="오늘핏 홈">
+          <span className="brand-word">ONUL</span>
+          <span className="brand-mark"><i /><i /><i /></span>
+          <span className="brand-word accent">FIT</span>
+        </a>
+        <nav className="main-nav" aria-label="주요 메뉴">
+          <a className="active" href="#today">오늘</a>
+          <a href="#wardrobe">내 옷장</a>
+          <a href="#profile">내 취향</a>
+        </nav>
+        <div className="header-profile">
+          <span className="sync-dot" />
+          <span className="sync-label">{isLoading ? '업데이트 중' : '설정 저장됨'}</span>
+          <span className="avatar">OF</span>
+        </div>
       </header>
 
-      <div className="content-grid">
-        <section className="builder-column">
-          <div className="intro-block"><div className="eyebrow"><span className="eyebrow-line" /> INPUT YOUR SIGNALS</div><h1>지금의 톤을<br /><em>편하게 알려주세요.</em></h1><p>고르거나, 적거나, 말해도 괜찮아요.<br />입력 방식은 나중에 바꿀 수 있어요.</p></div>
-
-          <div className="mode-tabs" role="tablist" aria-label="입력 모드 선택">
-            <button className={mode === 'selection' ? 'mode-tab active' : 'mode-tab'} onClick={() => setMode('selection')} role="tab" aria-selected={mode === 'selection'}><Sparkles size={16} /> 빠른 선택 <span className="mode-tab-hint">01</span></button>
-            <button className={mode === 'text' ? 'mode-tab active' : 'mode-tab'} onClick={() => setMode('text')} role="tab" aria-selected={mode === 'text'}><Waves size={16} /> 자연어로 말하기 <span className="mode-tab-hint">02</span></button>
-            <button className={mode === 'voice' ? 'mode-tab active' : 'mode-tab'} onClick={() => setMode('voice')} role="tab" aria-selected={mode === 'voice'}><Mic size={16} /> 음성으로 말하기 <span className="mode-tab-hint">03</span></button>
+      <div className="page-shell" id="top">
+        <section className="page-intro">
+          <div>
+            <p className="date-label">{dateLabel}</p>
+            <h1>오늘, 이렇게 나가세요.</h1>
           </div>
-
-          {mode === 'selection' ? <div className="selection-form" role="tabpanel">
-            <section className="form-section"><SectionHeading index="01" title="피부 타입" caption="가장 가까운 컨디션을 골라주세요." /><div className="option-grid skin-grid">{skinOptions.map(([value, label, description]) => <button key={value} className={selection.skinType === value ? 'option-card selected' : 'option-card'} onClick={() => updateSelection('skinType', value)}><span className="option-radio">{selection.skinType === value && <span />}</span><span><strong>{label}</strong><small>{description}</small></span></button>)}</div></section>
-
-            <section className="form-section split-section"><div><SectionHeading index="02" title="민감도" caption="새 제품에 느끼는 반응이에요." /><div className="pill-row">{[['high', '자극을 자주 느낌'], ['sometimes', '가끔 느낌'], ['low', '거의 없음'], ['unknown', '잘 모르겠어요']].map(([value, label]) => <ChoicePill key={value} active={selection.sensitivity === value} label={label} onClick={() => updateSelection('sensitivity', value)} />)}</div></div><div><SectionHeading index="03" title="지금의 고민" caption="여러 개를 골라도 좋아요." /><div className="pill-row">{concerns.map(([value, label]) => <ChoicePill key={value} active={selection.concerns.includes(value)} label={label} onClick={() => toggleList('concerns', value)} />)}</div></div></section>
-
-            <section className="form-section"><SectionHeading index="04" title="찾고 있는 제품" caption="추천받고 싶은 카테고리를 선택하세요." /><div className="category-grid">{categories.map(([value, label, description]) => <button key={value} className={selection.categories.includes(value) ? 'category-card selected' : 'category-card'} onClick={() => toggleList('categories', value)}><span className="category-icon">{value === 'base' ? '◐' : value === 'lip' ? '◒' : value === 'blush' ? '◓' : value === 'eye' ? '⌁' : value === 'cleanser' ? '◌' : '✦'}</span><span><strong>{label}</strong><small>{description}</small></span><span className="check-mark">{selection.categories.includes(value) ? <Check size={14} /> : '+'}</span></button>)}</div></section>
-
-            <section className="form-section split-section"><div><SectionHeading index="05" title="예산" caption="제품 하나 기준이에요." /><div className="budget-grid">{budgets.map(([value, label]) => <button key={value} className={selection.budget === value ? 'budget-card selected' : 'budget-card'} onClick={() => updateSelection('budget', value)}>{label}</button>)}</div></div><div><SectionHeading index="06" title="원하는 마무리감" caption="베이스 제품에 반영돼요." /><div className="finish-grid">{finishes.map(([value, label]) => <button key={value} className={selection.finish === value ? 'finish-card selected' : 'finish-card'} onClick={() => updateSelection('finish', value)}>{label}</button>)}</div></div></section>
-
-            <section className="form-section split-section color-section"><div><SectionHeading index="07" title="피부색" caption="가장 가까운 색상표를 골라주세요." /><div className="swatch-grid">{swatches.map(([id, color]) => <button key={id} className={selection.swatch === id ? 'swatch selected' : 'swatch'} style={{ backgroundColor: color }} onClick={() => updateSelection('swatch', id)} aria-label={id}><span>{id}</span></button>)}</div><div className="swatch-caption"><span className="selected-swatch" style={{ backgroundColor: swatches.find(([id]) => id === selection.swatch)?.[1] }} /> {selection.swatch} · neutral range</div></div><div><SectionHeading index="08" title="색상 비교" caption="각 행에서 더 가까운 쪽을 골라주세요." /><div className="compare-list">{comparePairs.map(([pairId, axis, left, right]) => <div className="compare-row" key={pairId}><div className="compare-title"><span>{axis}</span><small>{pairId}</small></div><div className="compare-options">{compareChoices.map(([value, label]) => <button key={value} className={selection.compare[pairId] === value ? 'compare-choice selected' : 'compare-choice'} onClick={() => chooseCompare(pairId, value)}>{value === 'left' ? 'L' : value === 'right' ? 'R' : value === 'similar' ? '≈' : '?'} <span>{label}</span></button>)}</div><div className="compare-hints"><span>{left}</span><span>{right}</span></div></div>)}</div></div></section>
-
-            <section className="form-section avoid-section"><div className="section-heading-row"><SectionHeading index="09" title="피하고 싶은 성분" caption="선택하면 후보에서 제외해요." /><span className="optional-label">선택 사항</span></div><div className="ingredient-grid">{[['fragrance', '향료'], ['alcohol', '에탄올'], ['essential_oil', '에센셜 오일']].map(([value, label]) => <button key={value} className={selection.avoidIngredients.includes(value) ? 'ingredient-card selected' : 'ingredient-card'} onClick={() => toggleList('avoidIngredients', value)}><span className="checkbox">{selection.avoidIngredients.includes(value) && <Check size={13} />}</span>{label}</button>)}</div></section>
-          </div> : mode === 'text' ? <section className="free-input-panel" role="tabpanel"><div className="free-input-label"><span className="section-number">N</span><div><h2>편하게 적어주세요.</h2><p>선택형 값이 있다면 함께 반영하고, 직접 고른 값이 우선돼요.</p></div></div><textarea className="natural-textarea" value={textInput} onChange={(event) => { setTextInput(event.target.value); setSubmitted(false); }} placeholder="피부 타입, 원하는 제품, 예산, 좋아하는 색을 편하게 적어주세요. 예: 지성인데 볼은 건조하고 차분한 립을 추천해줘." /><div className="prompt-suggestions"><span>이런 식으로 써도 좋아요</span><button onClick={() => setTextInput('지성인데 볼은 건조해. 너무 번들거리지 않는 쿠션과 차분한 장미빛 립을 3만원 안에서 추천해줘.')}>지성 + 건조함 + 차분한 립 + 3만원</button><button onClick={() => setTextInput('예민한 편이라 향료를 피하고 싶고, 자연스러운 마무리의 보습 제품을 찾고 있어요.')}>예민한 피부 + 향료 제외</button></div><div className="input-note"><ShieldCheck size={16} /> 제품명·가격·성분은 서버가 관리하는 목록에서만 가져와요.</div></section> : <section className="free-input-panel voice-panel" role="tabpanel"><div className="free-input-label"><span className="section-number">V</span><div><h2>말로 알려주세요.</h2><p>녹음 후 전사된 문장을 확인하고, 필요한 부분만 고쳐주세요.</p></div></div><div className={recording ? 'voice-recorder recording' : 'voice-recorder'}><div className="voice-orb"><AudioLines size={26} /></div><div className="voice-recorder-copy"><strong>{recording ? '듣고 있어요…' : '마이크를 눌러 시작하세요.'}</strong><span>{recording ? '원하는 만큼 말한 뒤 다시 눌러 멈춰요.' : '첫 버전은 음성을 서버에서 텍스트로 바꿔요.'}</span></div><button className="record-button" onClick={toggleRecording} aria-label={recording ? '녹음 중지' : '녹음 시작'}>{recording ? <Pause size={18} /> : <Mic size={18} />}</button></div><label className="transcript-label" htmlFor="transcript">전사 결과 <span>직접 수정 가능</span></label><textarea id="transcript" className="natural-textarea transcript" value={voiceText} onChange={(event) => { setVoiceText(event.target.value); setSubmitted(false); }} /><div className="input-note"><ShieldCheck size={16} /> 전사 신뢰도 94% · 수정된 문장이 최종 `text`로 전달돼요.</div></section>}
-
-          <div className="submit-bar"><div className="payload-status"><span className="payload-dot" /><div><strong>{modeLabel} 입력 준비됨</strong><span>inputPayload · schema 2.0</span></div></div><button className="submit-button" onClick={() => setSubmitted(true)}><span>{submitted ? '다시 계산하기' : '추천 결과 보기'}</span>{submitted ? <RotateCcw size={18} /> : <ArrowUpRight size={18} />}</button></div>
+          <form className="location-search" onSubmit={updateLocation}>
+            <MapPin aria-hidden="true" />
+            <Input aria-label="날씨를 확인할 지역" value={locationInput} onChange={(event) => setLocationInput(event.target.value)} placeholder="동네나 도시를 입력하세요" />
+            <Button type="submit" disabled={isLoading}>{isLoading ? '확인 중' : '날씨 보기'}</Button>
+            <button className="locate-button" type="button" onClick={useCurrentLocation} aria-label="현재 위치 사용"><LocateFixed /></button>
+          </form>
         </section>
 
-        <aside className="preview-column" aria-live="polite">
-          <div className="preview-topline"><span>OUTPUT PREVIEW</span><span className="preview-status"><span /> {submitted ? 'result ready' : 'waiting for input'}</span></div>
-          <div className="preview-hero"><div className="preview-orbit orbit-one" /><div className="preview-orbit orbit-two" /><div className="preview-orbit orbit-three" /><div className="preview-hero-content"><div className="preview-kicker">YOUR CURRENT PROFILE</div><h2>{submitted ? <>좋아요, 이 톤으로<br /><em>찾아볼게요.</em></> : <>당신의 선택을<br /><em>한 장면으로</em></>}</h2><p>{submitted ? '서버가 입력값을 정리하고 제품·컬러 후보를 매칭했어요.' : <>왼쪽 입력을 채우면<br />추천의 방향이 이곳에 쌓여요.</>}</p></div><div className="preview-palette"><span style={{ background: '#D89B85' }} /><span style={{ background: '#B98291' }} /><span style={{ background: '#8D596B' }} /><small>soft rose / neutral</small></div></div>
+        <output className="status-line" aria-live="polite"><span className="status-pulse" />{message}</output>
 
-          <div className="signal-card"><div className="signal-card-header"><span>PROFILE SIGNALS</span><span className="signal-count">{selection.concerns.length + selection.categories.length + 4} signals</span></div><div className="signal-chips"><span className="signal-chip accent">{chosenSkin}</span>{selection.concerns.slice(0, 2).map((item) => <span className="signal-chip" key={item}>{concerns.find(([value]) => value === item)?.[1]}</span>)}<span className="signal-chip">{chosenFinish}</span><span className="signal-chip">{selection.budget.toLocaleString('ko-KR')}원</span></div><div className="signal-meter"><span /><span /><span /><span /><span /></div><div className="signal-footer"><span>selection strength</span><strong>{submitted ? '92%' : '76%'}</strong></div></div>
+        <section className="dashboard-grid" id="today">
+          <article className="weather-card">
+            <div className="card-topline">
+              <span><MapPin /> {weather.location}</span>
+              <span>{weather.updatedAt} 기준 · {weather.source}</span>
+            </div>
+            <div className="weather-main">
+              <div>
+                <div className="weather-state"><WeatherIcon type={weather.current.kind} /> {weather.current.label}</div>
+                <div className="temperature">{weather.current.temperature}<span>°</span></div>
+                <p>체감 {weather.current.apparentTemperature}° · 최고 {weather.daily.maxTemperature}° / 최저 {weather.daily.minTemperature}°</p>
+              </div>
+              <div className="weather-disc" aria-hidden="true">
+                <WeatherIcon type={weather.current.kind} />
+                {(weather.current.kind === 'rain' || weather.current.kind === 'storm') && <><span className="rain-line line-one" /><span className="rain-line line-two" /><span className="rain-line line-three" /></>}
+              </div>
+            </div>
+            <div className="weather-metrics">
+              <div><Droplets /><span>강수 확률<strong>{weather.current.precipitationProbability}%</strong></span></div>
+              <div><Wind /><span>바람<strong>{weather.current.windSpeed} m/s</strong></span></div>
+              <div><Sun /><span>자외선<strong>{weather.current.uvLabel}</strong></span></div>
+            </div>
+            <div className="weather-note"><EssentialIcon name={recommendation.essentials[0]?.name ?? ''} /><p><strong>{recommendation.essentials[0]?.name ?? '외출 준비'}을(를) 확인하세요.</strong><span>{recommendation.notice}</span></p></div>
+          </article>
 
-          <div className="recommendation-card"><div className="recommendation-header"><div><span className="section-number">R</span><div><p>RECOMMENDATION PREVIEW</p><h3>{submitted ? '추천 후보가 준비됐어요' : '이런 결과가 나와요'}</h3></div></div><button className="mini-icon-button" aria-label="결과 더 보기"><ChevronDown size={16} /></button></div><div className="product-preview-list">{products.filter((product) => selection.categories.includes(product.category)).slice(0, submitted ? 3 : 2).map((product, index) => <div className="product-preview" key={product.category}><div className={`product-swatch product-${index}`}><span>{index + 1}</span></div><div className="product-copy"><span>{product.brand}</span><strong>{product.label}</strong><small>{product.price} · {product.tone}</small></div><ArrowUpRight size={15} /></div>)}{selection.categories.length === 0 && <div className="empty-preview">제품 카테고리를 한 가지 이상 골라주세요.</div>}</div><div className="recommendation-foot"><FlaskConical size={15} /><span>제품·가격·성분은 검토된 catalog에서만 선택돼요.</span></div></div>
+          <article className="outfit-card">
+            <div className="outfit-image-wrap">
+              <Image src="/outfit-rainy-day.jpg" width={1000} height={1000} priority alt="네이비 재킷, 크림 니트, 차콜 팬츠와 우산으로 구성한 옷장 예시" />
+              <span className="image-label">WARDROBE EDIT</span>
+              <span className="match-badge">{recommendation.matchScore}% 맞춤</span>
+            </div>
+            <div className="outfit-copy">
+              <div className="section-kicker">오늘의 조합</div>
+              <h2>{recommendation.headline}</h2>
+              <p>{recommendation.description}</p>
+              <ul className="outfit-item-list">{recommendation.outfitItems.map((item) => <li key={item}>{item}</li>)}</ul>
+              <div className="outfit-tags">{recommendation.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>
+              <button className="text-link" type="button" onClick={refreshRecommendation} disabled={isLoading}>다른 조합 보기 <ArrowRight /></button>
+            </div>
+          </article>
 
-          <div className="json-drawer"><div className="json-title"><span><Send size={14} /> REQUEST PAYLOAD</span><span>Object</span></div><pre>{JSON.stringify(inputPayload, null, 2)}</pre></div>
-          <footer className="preview-footer"><span><ShieldCheck size={14} /> 분석 결과는 화장품 선택 참고용이에요.</span><button onClick={reset}><Play size={13} /> 처음으로</button></footer>
-        </aside>
+          <article className="hourly-card">
+            <div className="section-heading">
+              <div><span className="section-kicker">시간대별</span><h2>오늘의 기온과 강수 가능성</h2></div>
+              <span className="subtle-label">{weather.location} 기준</span>
+            </div>
+            <div className="hourly-list">
+              {weather.hourly.map((item) => (
+                <div className="hour-item" key={`${item.time}-${item.temperature}`}>
+                  <span className="hour-time">{item.time}</span><WeatherIcon type={item.kind} /><strong>{item.temperature}°</strong><span className="rain-chance">{item.precipitationProbability}%</span>
+                </div>
+              ))}
+            </div>
+          </article>
+
+          <article className="essentials-card">
+            <div className="section-heading compact"><div><span className="section-kicker">외출 준비</span><h2>오늘 챙길 것</h2></div><span className="count-label">{recommendation.essentials.length}</span></div>
+            <div className="essential-list">
+              {recommendation.essentials.map((item) => (
+                <div className={item.priority === 'required' ? 'essential-item required' : 'essential-item'} key={item.name}>
+                  <span className="essential-icon"><EssentialIcon name={item.name} /></span><p><strong>{item.name}</strong><small>{item.reason}</small></p>{item.priority === 'required' ? <span>필수</span> : <Check />}
+                </div>
+              ))}
+            </div>
+          </article>
+        </section>
+
+        <section className="settings-grid">
+          <article className="profile-card" id="profile">
+            <div className="section-heading"><div><span className="section-kicker">내 취향</span><h2>추천 기준</h2></div><span className="saved-label"><Check /> 자동 저장</span></div>
+            <div className="preference-row">
+              <span className="preference-label">성별</span>
+              <RadioGroup className="choice-group" value={gender} onValueChange={(value) => setGender(value as 'female' | 'male')}>
+                <label htmlFor="gender-female" className={gender === 'female' ? 'radio-choice selected' : 'radio-choice'}><RadioGroupItem id="gender-female" value="female" /><span>여성</span></label>
+                <label htmlFor="gender-male" className={gender === 'male' ? 'radio-choice selected' : 'radio-choice'}><RadioGroupItem id="gender-male" value="male" /><span>남성</span></label>
+              </RadioGroup>
+            </div>
+            <div className="preference-row stacked">
+              <span className="preference-label">즐겨 입는 스타일</span>
+              <RadioGroup className="style-options" value={style} onValueChange={(value) => setStyle(value as string)}>
+                {styles.map((item) => <label htmlFor={`style-${item}`} key={item} className={style === item ? 'style-choice selected' : 'style-choice'}><RadioGroupItem id={`style-${item}`} value={item} /><span>{item}</span></label>)}
+              </RadioGroup>
+            </div>
+            <div className="preference-row two-settings">
+              <div className="setting-field"><label className="preference-label" htmlFor="activity">외출 목적</label><NativeSelect id="activity" value={activity} onChange={(event) => setActivity(event.target.value)}><NativeSelectOption value="출근">출근</NativeSelectOption><NativeSelectOption value="등교">등교</NativeSelectOption><NativeSelectOption value="데이트">데이트</NativeSelectOption><NativeSelectOption value="운동">운동</NativeSelectOption><NativeSelectOption value="여행">여행</NativeSelectOption></NativeSelect></div>
+              <div className="setting-field"><label className="preference-label" htmlFor="sensitivity">추위 민감도</label><NativeSelect id="sensitivity" value={sensitivity} onChange={(event) => setSensitivity(event.target.value)}><NativeSelectOption value="더위를 많이 탐">더위를 많이 탐</NativeSelectOption><NativeSelectOption value="보통">보통</NativeSelectOption><NativeSelectOption value="추위를 많이 탐">추위를 많이 탐</NativeSelectOption></NativeSelect></div>
+            </div>
+            <div className="profile-summary"><Shirt /><p><strong>{style} 스타일을 중심으로 추천해요.</strong><span>{activity}할 때 편하고 자연스러운 조합을 우선합니다.</span></p></div>
+          </article>
+
+          <article className="wardrobe-card" id="wardrobe">
+            <div className="section-heading"><div><span className="section-kicker">내 옷장</span><h2>추천에 사용할 옷</h2></div><Button variant="outline" size="sm" onClick={() => setShowAddItem((current) => !current)}><Plus /> 옷 추가</Button></div>
+            {showAddItem && <form className="add-item-form" onSubmit={addWardrobeItem}><Input value={newItemName} onChange={(event) => setNewItemName(event.target.value)} placeholder="예: 그레이 후드 집업" aria-label="추가할 옷 이름" /><NativeSelect aria-label="추가할 옷 카테고리" value={newItemCategory} onChange={(event) => setNewItemCategory(event.target.value)}><NativeSelectOption value="상의">상의</NativeSelectOption><NativeSelectOption value="하의">하의</NativeSelectOption><NativeSelectOption value="아우터">아우터</NativeSelectOption><NativeSelectOption value="신발">신발</NativeSelectOption><NativeSelectOption value="액세서리">액세서리</NativeSelectOption></NativeSelect><Button type="submit">등록</Button></form>}
+            <div className="wardrobe-list">
+              {wardrobe.map((item) => {
+                const selected = selectedItems.includes(item.id);
+                return <button key={item.id} type="button" className={selected ? 'wardrobe-item selected' : 'wardrobe-item'} onClick={() => toggleWardrobe(item.id)} aria-pressed={selected}><span className="item-color" style={{ backgroundColor: item.color }} /><span><strong>{item.name}</strong><small>{item.category}</small></span><span className="item-check">{selected && <Check />}</span></button>;
+              })}
+            </div>
+            <div className="wardrobe-footer"><span>{selectedItems.length}벌을 추천에 사용 중</span><Button onClick={refreshRecommendation} disabled={isLoading}><RefreshCw /> {isLoading ? '추천 만드는 중' : '추천 새로 받기'}</Button></div>
+          </article>
+        </section>
+
+        <footer className="app-footer"><span>날씨 데이터: Open-Meteo</span><span>기상특보가 있는 날에는 공식 안내를 함께 확인하세요.</span></footer>
       </div>
     </main>
   );
 }
 
-function SectionHeading({ index, title, caption }: { index: string; title: string; caption: string }) {
-  return <div className="section-heading"><span className="section-number">{index}</span><div><h2>{title}</h2><p>{caption}</p></div></div>;
+function WeatherIcon({ type }: { type: WeatherKind }) {
+  if (type === 'sun') return <Sun className="hour-icon sun" aria-label="맑음" />;
+  if (type === 'rain') return <CloudRain className="hour-icon rain" aria-label="비" />;
+  if (type === 'snow') return <CloudSnow className="hour-icon snow" aria-label="눈" />;
+  if (type === 'storm') return <CloudLightning className="hour-icon storm" aria-label="뇌우" />;
+  if (type === 'fog') return <CloudFog className="hour-icon cloud" aria-label="안개" />;
+  return <CloudSun className="hour-icon cloud" aria-label="흐림" />;
 }
-function ChoicePill({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) {
-  return <button className={active ? 'choice-pill active' : 'choice-pill'} onClick={onClick}>{active && <Check size={13} />}{label}</button>;
+
+function EssentialIcon({ name }: { name: string }) {
+  if (name.includes('우산')) return <Umbrella />;
+  if (name.includes('물')) return <Droplets />;
+  if (name.includes('선크림')) return <Sun />;
+  if (name.includes('눈') || name.includes('미끄럼')) return <Snowflake />;
+  if (name.includes('바람') || name.includes('겉옷') || name.includes('보온')) return <Shirt />;
+  return <BriefcaseBusiness />;
 }

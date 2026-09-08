@@ -1,7 +1,8 @@
 {
-  "name": "sites-project",
+  "name": "onul-fit",
   "version": "0.1.0",
   "private": true,
+  "description": "오늘의 날씨와 내 옷장을 반영한 개인 맞춤 외출 준비 서비스",
   "engines": {
     "node": ">=22.13.0"
   },
