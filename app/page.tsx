@@ -324,11 +324,12 @@ export default function Home() {
       setMessage('이 브라우저에서는 현재 위치를 사용할 수 없어요.');
       return;
     }
+    setLocationInput('현재 위치');
     setMessage('현재 위치를 확인하고 있어요.');
     navigator.geolocation.getCurrentPosition(
       (position) => void requestWeather('현재 위치', { latitude: position.coords.latitude, longitude: position.coords.longitude }).catch(() => undefined),
       () => setMessage('위치 권한을 확인하거나 지역을 직접 입력해 주세요.'),
-      { enableHighAccuracy: false, timeout: 7_000, maximumAge: 600_000 },
+      { enableHighAccuracy: true, timeout: 10_000, maximumAge: 0 },
     );
   }
 
@@ -399,7 +400,7 @@ export default function Home() {
               <Button type="submit" disabled={isLoading} aria-label={isLoading ? '날씨 확인 중' : '입력한 지역의 날씨 확인'}>
                 {isLoading ? <><RefreshCw className="loading-spin" /> 확인 중</> : <>날씨 확인 <ArrowRight /></>}
               </Button>
-              <button className="locate-button" type="button" onClick={useCurrentLocation} aria-label="현재 위치 사용" title="현재 위치 사용"><LocateFixed /><span>현재 위치</span></button>
+              <button className="locate-button" type="button" onClick={useCurrentLocation} disabled={isLoading} aria-label="현재 위치 사용" title="현재 위치 사용"><LocateFixed /><span>현재 위치</span></button>
             </div>
           </form>
         </section>
