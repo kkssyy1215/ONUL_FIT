@@ -33,60 +33,97 @@ type RecommendationInput = {
   };
   profile: { gender: 'female' | 'male'; style: string; activity: string; sensitivity: string };
   wardrobe: Array<{ id: string; name: string; category: string; color?: string; selected: boolean }>;
+  refreshToken?: number;
 };
+
+function categoryMatches(category: string, expected: string) {
+  const aliases: Record<string, string[]> = {
+    top: ['상의', 'top'],
+    bottom: ['하의', 'bottom'],
+    outer: ['아우터', '겉옷', 'outer'],
+    shoes: ['신발', 'shoes'],
+    accessory: ['액세서리', '악세서리', 'accessory'],
+  };
+  return aliases[expected]?.includes(category.toLowerCase()) ?? false;
+}
 
 function localRecommendation(input: RecommendationInput): Recommendation {
   const { current } = input.weather;
-  const rainy = current.kind === 'rain' || current.kind === 'storm';
-  const snowy = current.kind === 'snow';
-  const hot = current.apparentTemperature >= 28;
-  const cold = current.apparentTemperature <= 8;
+  const profile = input.profile;
+  const rainy = current.kind === 'rain' || current.kind === 'storm' || current.precipitationProbability >= 40 || current.precipitation > 0;
+  const snowCodes = [71, 73, 75, 77, 85, 86];
+  const snowy = current.kind === 'snow' || snowCodes.includes(current.weatherCode);
+  const hot = current.apparentTemperature >= 28 || (profile.sensitivity === '더위를 많이 탐' && current.apparentTemperature >= 24);
+  const cold = current.apparentTemperature <= 8 || (profile.sensitivity === '추위를 많이 탐' && current.apparentTemperature <= 12);
   const essentials: Essential[] = [];
 
-  if (rainy || current.precipitationProbability >= 40) essentials.push({ name: '접이식 우산', reason: `강수 확률 ${current.precipitationProbability}%`, priority: 'required' });
-  if (snowy) essentials.push({ name: '미끄럼 방지 신발', reason: '눈길 이동에 대비', priority: 'required' });
-  if (current.uvLabel === '높음' || current.uvLabel === '매우 높음') essentials.push({ name: '선크림', reason: `자외선 ${current.uvLabel}`, priority: 'required' });
+  if (snowy) essentials.push({ name: '미끄럼 방지 신발', reason: '눈길과 결빙 구간에 대비', priority: 'required' });
+  else if (rainy) essentials.push({ name: '접이식 우산', reason: `강수 확률 ${current.precipitationProbability}%`, priority: 'required' });
+  if (current.uvLabel === '높음' || current.uvLabel === '매우 높음' || current.uvIndex >= 6) essentials.push({ name: '선크림', reason: `자외선 ${current.uvLabel || current.uvIndex}`, priority: 'required' });
   if (hot) essentials.push({ name: '물', reason: '높은 체감온도 대비', priority: 'recommended' });
-  if (cold) essentials.push({ name: '보온 소품', reason: '낮은 체감온도 대비', priority: 'recommended' });
+  if (cold || snowy) essentials.push({ name: '보온 소품', reason: '낮은 체감온도 대비', priority: 'recommended' });
   if (current.windSpeed >= 8) essentials.push({ name: '바람막이', reason: '강한 바람 대비', priority: 'recommended' });
   if (essentials.length < 3) essentials.push({ name: '얇은 겉옷', reason: '실내외 온도 차 대비', priority: 'recommended' });
   if (essentials.length < 3) essentials.push({ name: '작은 가방', reason: '외출 준비물을 가볍게 보관', priority: 'recommended' });
 
-  let outfitItems = ['반팔 상의', '가벼운 하의', '통풍이 좋은 신발'];
-  let headline = '가볍고 편안하게';
-  let description = '기온에 맞는 가벼운 소재를 중심으로 구성했어요.';
+  const selected = input.wardrobe.filter((item) => item.selected);
+  const rotation = Math.max(0, Math.floor(input.refreshToken || 0));
+  const chooseOwned = (category: string, keywords: string[]) => {
+    const candidates = selected.filter((item) => categoryMatches(item.category, category));
+    const matches = candidates.filter((item) => keywords.some((keyword) => item.name.toLowerCase().includes(keyword.toLowerCase())));
+    const pool = matches.length > 0 ? matches : candidates;
+    return pool.length > 0 ? pool[rotation % pool.length] : undefined;
+  };
+  const itemName = (category: string, keywords: string[], fallback: string) => chooseOwned(category, keywords)?.name || fallback;
 
-  if (cold) {
-    outfitItems = ['니트', '보온 아우터', '긴 바지', '막힌 신발'];
-    headline = '체온을 지키는 단정한 겹쳐 입기';
-    description = '보온성이 있는 상의와 아우터를 겹쳐 입고, 목과 손목을 차갑지 않게 준비하세요.';
+  let outfitItems: string[];
+  let headline: string;
+  let description: string;
+  let seasonTag: string;
+
+  if (snowy) {
+    outfitItems = [itemName('top', ['니트', '기모', '울'], '보온 니트'), itemName('outer', ['패딩', '코트', '다운'], '보온 아우터'), itemName('bottom', ['팬츠', '바지'], '기모 긴 바지'), itemName('shoes', ['부츠', '방수'], '미끄럼 방지 신발')];
+    headline = `${profile.style} 스타일로 눈길에 대비하는 코디`;
+    description = `${profile.activity} 일정에 맞춰 보온성과 미끄럼 방지를 우선했어요. 눈이 녹는 구간에서는 밑창이 미끄럽지 않은 신발을 선택하세요.`;
+    seasonTag = '눈·결빙';
+  } else if (cold) {
+    outfitItems = [itemName('top', ['니트', '울', '기모'], '보온 니트'), itemName('outer', ['패딩', '코트', '다운', '재킷'], '보온 아우터'), itemName('bottom', ['팬츠', '바지'], '긴 바지'), itemName('shoes', ['부츠', '운동화', '로퍼'], '막힌 신발')];
+    headline = `${profile.style} 스타일로 체온을 지키는 겹쳐 입기`;
+    description = `${profile.activity}할 때 벗고 입기 쉬운 보온 레이어드를 구성했어요. ${profile.sensitivity === '추위를 많이 탐' ? '추위를 많이 타는 편이므로 목과 손목도 따뜻하게 보호하세요.' : '실내에서는 아우터를 벗어 체온을 조절하세요.'}`;
+    seasonTag = '보온';
+  } else if (hot) {
+    outfitItems = [itemName('top', ['린넨', '반팔', '반소매', '셔츠'], '통기성 좋은 상의'), itemName('bottom', ['반바지', '팬츠', '바지'], '가벼운 하의'), itemName('shoes', ['샌들', '스니커즈', '로퍼'], '통풍이 좋은 신발')];
+    headline = `${profile.style} 스타일로 시원하고 가볍게`;
+    description = `${profile.activity} 일정에 맞춰 통기성과 활동성을 우선했어요. 햇볕에 오래 있으면 자외선 지수에 맞춰 선크림을 덧바르세요.`;
+    seasonTag = '더운 날';
+  } else if (rainy) {
+    outfitItems = [itemName('top', ['니트', '긴팔', '셔츠'], '얇은 긴팔 상의'), itemName('bottom', ['팬츠', '바지'], '젖기 쉬운 밑단이 짧은 하의'), itemName('outer', ['레인', '방수', '우비'], '생활 방수 아우터'), itemName('shoes', ['방수', '부츠'], '미끄럼이 적은 신발')];
+    headline = `${profile.style} 스타일로 비에 젖지 않는 ${profile.activity} 코디`;
+    description = '강수 가능성을 반영해 방수 아우터와 미끄럼이 적은 신발을 우선했어요. 우산을 함께 준비하면 갑작스러운 비에도 대응할 수 있습니다.';
+    seasonTag = '우천';
   } else if (current.apparentTemperature <= 16) {
-    outfitItems = ['긴팔 상의', '가벼운 재킷', '긴 바지', '스니커즈'];
-    headline = '겉옷 하나로 일교차에 대비';
-    description = '낮에는 가볍게 벗을 수 있는 재킷이나 카디건을 더한 조합이 좋아요.';
-  } else if (current.apparentTemperature <= 22) {
-    outfitItems = ['얇은 긴팔', '코튼 팬츠', '가벼운 아우터', '스니커즈'];
-    headline = rainy ? '젖지 않고, 답답하지 않게' : '가볍게 겹쳐 입기 좋은 날';
-    description = rainy ? '얇은 상의에 생활 방수 아우터를 더하면 비가 그친 뒤에도 편안합니다.' : '얇은 긴팔과 가벼운 아우터로 시간대별 기온 변화에 대응하세요.';
-  } else if (!hot) {
-    outfitItems = ['반팔 상의', '얇은 셔츠', '가벼운 팬츠', '스니커즈'];
-    headline = rainy ? '습한 날에도 가볍게' : '선선함을 남긴 가벼운 차림';
-    description = '통기성이 좋은 상의와 가벼운 하의를 골라 한낮에도 부담이 없도록 구성했어요.';
+    outfitItems = [itemName('top', ['긴팔', '니트', '셔츠'], '긴팔 상의'), itemName('outer', ['재킷', '가디건', '코트'], '가벼운 재킷'), itemName('bottom', ['팬츠', '바지'], '긴 바지'), itemName('shoes', ['스니커즈', '로퍼'], '스니커즈')];
+    headline = `${profile.style} 스타일로 일교차에 대비`;
+    description = `${profile.activity} 중 더워지면 벗을 수 있는 가벼운 겉옷을 더했어요.`;
+    seasonTag = '간절기';
+  } else {
+    outfitItems = [itemName('top', ['반팔', '린넨', '셔츠', '니트'], '가벼운 상의'), itemName('bottom', ['팬츠', '바지'], '가벼운 하의'), itemName('shoes', ['스니커즈', '로퍼'], '편한 신발')];
+    headline = `${profile.style} 스타일로 편안하게`;
+    description = `${profile.activity} 일정에 맞춰 무난하고 활동하기 편한 조합을 골랐어요.`;
+    seasonTag = '쾌적한 날';
   }
 
-  if (rainy) outfitItems = [...outfitItems.filter((item) => item !== '가벼운 아우터'), '생활 방수 아우터'];
-  const selectedNames = input.wardrobe.filter((item) => item.selected).map((item) => item.name);
-  const ownedMatches = selectedNames.filter((name) => outfitItems.some((item) => name.includes(item.split(' ')[0])));
-  if (ownedMatches.length) outfitItems = [...ownedMatches, ...outfitItems.filter((item) => !ownedMatches.some((name) => name.includes(item.split(' ')[0])))];
+  const selectedCategoryCount = new Set(selected.map((item) => item.category)).size;
+  const categoryCount = new Set(outfitItems).size;
 
   return {
     headline,
     description,
     notice: rainy ? '비가 오는 시간대에는 미끄러운 길을 주의하세요.' : hot ? '한낮의 장시간 야외 활동은 피하고 물을 자주 마시세요.' : '시간대별 기온을 확인하고 얇은 겉옷을 조절하세요.',
-    matchScore: Math.min(96, 82 + Math.min(selectedNames.length, 6) * 2),
-    tags: [input.profile.style, input.profile.activity, rainy ? '우천' : hot ? '여름' : cold ? '보온' : '간절기'],
+    matchScore: Math.min(98, 72 + Math.min(selected.length, 6) * 3 + Math.min(selectedCategoryCount, categoryCount) * 3),
+    tags: [profile.style, profile.activity, seasonTag],
     essentials: essentials.slice(0, 3),
-    outfitItems: outfitItems.slice(0, 5),
+    outfitItems: Array.from(new Set(outfitItems)).slice(0, 5),
   };
 }
 
@@ -109,7 +146,8 @@ function buildAgentriaInput(input: RecommendationInput) {
   const requestText =
     `오늘 ${location} 날씨에 맞는 ${genderLabel} ` +
     `${input.profile.style} 스타일의 ${input.profile.activity} 코디를 추천해줘. ` +
-    `온도 민감도는 ${input.profile.sensitivity}이야.`;
+    `온도 민감도는 ${input.profile.sensitivity}이야.` +
+    (input.refreshToken ? ` 이전 결과와 다른 조합을 우선해서 추천해줘. 새로고침 회차는 ${input.refreshToken}번이야.` : '');
 
   // 에이전트리아의 날씨 표준화 Python 노드가 읽을 수 있도록
   // 웹페이지의 정규화된 날씨 데이터를 기존 weatherText 입력 스키마로 변환합니다.
@@ -195,14 +233,26 @@ async function runAgentriaAbility(
   params: Record<string, string>,
 ) {
   const headers = { 'X-API-KEY': apiKey };
-  const formData = new FormData();
-  formData.append('params_json', JSON.stringify(params));
+  // Agentria는 params_json 한 필드를 받으므로 boundary가 필요한 multipart보다
+  // 런타임 차이가 적은 URL-encoded form으로 전송합니다. 이 형식은 API가
+  // 동일하게 파싱하며 Cloudflare/Vinext 로컬 워커에서도 안정적으로 동작합니다.
+  const formBody = new URLSearchParams({ params_json: JSON.stringify(params) });
 
-  const runResponse = await resilientFetch(endpoint, {
-    method: 'POST',
-    headers,
-    body: formData,
-  }, { timeoutMs: 10_000, retries: 1 });
+  // 실행 POST는 중복 전송을 피하기 위해 공통 재시도 래퍼와 분리합니다.
+  const controller = new AbortController();
+  // 실행 요청은 비동기 request ID를 받을 때까지 충분히 기다립니다.
+  const timeout = setTimeout(() => controller.abort(), 60_000);
+  let runResponse: Response;
+  try {
+    runResponse = await fetch(endpoint, {
+      method: 'POST',
+      headers,
+      body: formBody,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
 
   const runText = await runResponse.text();
   if (!runResponse.ok) {
@@ -216,7 +266,9 @@ async function runAgentriaAbility(
   if (!requestId) return runBody;
 
   const statusEndpoint = endpoint.replace(/\/+$/, '');
-  const deadline = Date.now() + 45_000;
+  // 비동기 실행 ID가 반환되면 최대 2분 동안 완료 상태를 확인합니다.
+  // 실행 요청 60초 + 상태 대기 120초가 전체 상한입니다.
+  const deadline = Date.now() + 120_000;
 
   while (Date.now() < deadline) {
     const statusResponse = await resilientFetch(
@@ -340,13 +392,14 @@ function mapAgentriaResponse(raw: unknown, fallback: Recommendation): Recommenda
 }
 
 export async function POST(request: Request) {
+  let fallback: Recommendation | null = null;
   try {
     const input = await request.json() as RecommendationInput;
     if (!input?.weather?.current || !input?.profile || !Array.isArray(input?.wardrobe)) {
       return Response.json({ message: '추천에 필요한 입력값이 부족해요.' }, { status: 400 });
     }
 
-    const fallback = localRecommendation(input);
+    fallback = localRecommendation(input);
     const endpoint = process.env.AGENTRIA_API_URL;
     if (!endpoint) return Response.json({ data: fallback, source: 'local' });
 
@@ -358,6 +411,16 @@ export async function POST(request: Request) {
     return Response.json({ data: mapAgentriaResponse(raw, fallback), source: 'agentria' });
   } catch (error) {
     console.error('Recommendation API error', error);
+    if (fallback) {
+      const upstreamFailed = error instanceof Error && /Agentria API error 5\d\d/.test(error.message);
+      return Response.json({
+        data: fallback,
+        source: 'local-fallback',
+        warning: upstreamFailed
+          ? 'AI 추천 서버가 오류를 반환해 날씨·취향·옷장 기반 보완 추천을 표시했어요.'
+          : 'AI 추천 응답이 늦어 날씨·취향·옷장 기반 보완 추천을 표시했어요.',
+      });
+    }
     return Response.json({ message: '추천을 만드는 중 문제가 생겼어요. 잠시 후 다시 시도해 주세요.' }, { status: 502 });
   }
 }

@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import Image from 'next/image';
 import {
   ArrowRight,
   BriefcaseBusiness,
@@ -64,10 +63,16 @@ type Recommendation = {
   essentials: Essential[];
   outfitItems: string[];
 };
+type RecommendationResponse = {
+  data: Recommendation;
+  source?: 'agentria' | 'local' | 'local-fallback';
+  warning?: string;
+};
 
 type WardrobeItem = { id: string; name: string; category: string; color: string };
 type FormSubmitEvent = { preventDefault: () => void };
-type WeatherRequester = (query: string, coordinates?: { latitude: number; longitude: number }, overrides?: { gender?: 'female' | 'male'; style?: string; activity?: string; sensitivity?: string; wardrobe?: WardrobeItem[]; selectedItems?: string[] }) => Promise<WeatherData>;
+type RecommendationOverrides = { gender?: 'female' | 'male'; style?: string; activity?: string; sensitivity?: string; wardrobe?: WardrobeItem[]; selectedItems?: string[]; refreshToken?: number };
+type WeatherRequester = (query: string, coordinates?: { latitude: number; longitude: number }, overrides?: RecommendationOverrides) => Promise<WeatherData>;
 
 type ModelContext = {
   registerTool: (
@@ -140,6 +145,7 @@ const initialWardrobe: WardrobeItem[] = [
 
 const styles = ['미니멀', '캐주얼', '오피스', '스트릿', '페미닌', '스포티'];
 const itemColors: Record<string, string> = { '상의': '#9db7ca', '하의': '#53585f', '아우터': '#263951', '신발': '#e9e5da', '액세서리': '#cf8a64' };
+const wardrobeCategories = ['상의', '하의', '아우터', '신발', '액세서리'];
 
 const dateLabel = new Intl.DateTimeFormat('ko-KR', {
   year: 'numeric', month: 'long', day: 'numeric', weekday: 'long', timeZone: 'Asia/Seoul',
@@ -159,39 +165,49 @@ export default function Home() {
   const [newItemCategory, setNewItemCategory] = useState('상의');
   const [showAddItem, setShowAddItem] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRecommendationLoading, setIsRecommendationLoading] = useState(false);
   const [message, setMessage] = useState('최신 날씨를 확인하고 있어요.');
+  const [recommendationSource, setRecommendationSource] = useState<RecommendationResponse['source']>('local');
+  const [recommendationCycle, setRecommendationCycle] = useState(0);
   const [storageReady, setStorageReady] = useState(false);
 
   const requestRecommendation = useCallback(async (
     nextWeather: WeatherData,
-    overrides?: { gender?: 'female' | 'male'; style?: string; activity?: string; sensitivity?: string; wardrobe?: WardrobeItem[]; selectedItems?: string[] },
+    overrides?: RecommendationOverrides,
   ) => {
     const nextWardrobe = overrides?.wardrobe ?? wardrobe;
     const nextSelected = overrides?.selectedItems ?? selectedItems;
-    const response = await fetch('/api/recommend/', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        weather: nextWeather,
-        profile: {
-          gender: overrides?.gender ?? gender,
-          style: overrides?.style ?? style,
-          activity: overrides?.activity ?? activity,
-          sensitivity: overrides?.sensitivity ?? sensitivity,
-        },
-        wardrobe: nextWardrobe.map((item) => ({ ...item, selected: nextSelected.includes(item.id) })),
-      }),
-    });
-    if (!response.ok) throw new Error('추천을 불러오지 못했어요.');
-    const result = await response.json() as { data: Recommendation };
-    setRecommendation(result.data);
-    return result.data;
+    setIsRecommendationLoading(true);
+    try {
+      const response = await fetch('/api/recommend/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          weather: nextWeather,
+          profile: {
+            gender: overrides?.gender ?? gender,
+            style: overrides?.style ?? style,
+            activity: overrides?.activity ?? activity,
+            sensitivity: overrides?.sensitivity ?? sensitivity,
+          },
+          wardrobe: nextWardrobe.map((item) => ({ ...item, selected: nextSelected.includes(item.id) })),
+          refreshToken: overrides?.refreshToken,
+        }),
+      });
+      if (!response.ok) throw new Error('추천을 불러오지 못했어요.');
+      const result = await response.json() as RecommendationResponse;
+      setRecommendation(result.data);
+      setRecommendationSource(result.source ?? 'local');
+      return result;
+    } finally {
+      setIsRecommendationLoading(false);
+    }
   }, [activity, gender, sensitivity, selectedItems, style, wardrobe]);
 
   const requestWeather = useCallback(async (
     query: string,
     coordinates?: { latitude: number; longitude: number },
-    overrides?: { gender?: 'female' | 'male'; style?: string; activity?: string; sensitivity?: string; wardrobe?: WardrobeItem[]; selectedItems?: string[] },
+    overrides?: RecommendationOverrides,
   ) => {
     setIsLoading(true);
     setMessage('날씨와 옷장을 함께 확인하고 있어요.');
@@ -206,9 +222,13 @@ export default function Home() {
       if (!response.ok) throw new Error(result.message || '날씨를 불러오지 못했어요.');
       setWeather(result);
       setLocationInput(result.location);
+      // 날씨는 먼저 보여주고, Agentria 추천은 별도 상태로 표시합니다.
+      // AI가 느리거나 실패해도 날씨 화면 전체가 잠기지 않습니다.
+      setIsLoading(false);
+      setMessage(`${result.location} 날씨를 업데이트했어요. AI 추천을 분석 중이에요.`);
       try {
-        await requestRecommendation(result, overrides);
-        setMessage(`${result.location} 날씨와 추천을 업데이트했어요.`);
+        const recommendationResult = await requestRecommendation(result, overrides);
+        setMessage(recommendationResult.warning || `${result.location} 날씨와 추천을 업데이트했어요.`);
       } catch {
         // Weather and recommendation are independent. Keep the valid weather
         // result visible even when the external recommendation API is down.
@@ -350,20 +370,21 @@ export default function Home() {
   }
 
   async function refreshRecommendation() {
-    setIsLoading(true);
     setMessage('저장한 취향으로 추천을 다시 만들고 있어요.');
     try {
-      await requestRecommendation(weather);
-      setMessage('내 취향과 옷장을 반영했어요.');
+      const nextCycle = recommendationCycle + 1;
+      setRecommendationCycle(nextCycle);
+      const result = await requestRecommendation(weather, { refreshToken: nextCycle });
+      setMessage(result.warning || '내 취향과 옷장을 반영해 추천을 다시 계산했어요.');
     } catch (error) {
       setMessage(error instanceof Error ? error.message : '추천을 다시 만들지 못했어요.');
-    } finally {
-      setIsLoading(false);
     }
   }
 
+  const isBusy = isLoading || isRecommendationLoading;
+
   return (
-    <main className={`onul-app ${isLoading ? 'is-loading' : ''}`}>
+    <main className={`onul-app ${isBusy ? 'is-loading' : ''}`}>
       <header className="app-header">
         <a className="brand" href="#top" aria-label="오늘핏 홈">
           <span className="brand-word">ONUL</span>
@@ -377,7 +398,7 @@ export default function Home() {
         </nav>
         <div className="header-profile">
           <span className="sync-dot" />
-          <span className="sync-label">{isLoading ? '업데이트 중' : '설정 저장됨'}</span>
+          <span className="sync-label">{isLoading ? '날씨 업데이트 중' : isRecommendationLoading ? 'AI 추천 분석 중' : '설정 저장됨'}</span>
           <span className="avatar">OF</span>
         </div>
       </header>
@@ -433,18 +454,13 @@ export default function Home() {
           </article>
 
           <article className="outfit-card">
-            <div className="outfit-image-wrap">
-              <Image src="/outfit-rainy-day.jpg" width={1000} height={1000} priority alt="네이비 재킷, 크림 니트, 차콜 팬츠와 우산으로 구성한 옷장 예시" />
-              <span className="image-label">WARDROBE EDIT</span>
-              <span className="match-badge">{recommendation.matchScore}% 맞춤</span>
-            </div>
             <div className="outfit-copy">
-              <div className="section-kicker">오늘의 조합</div>
+                <div className="outfit-kicker-row"><div className="section-kicker">오늘의 조합</div><div className="outfit-meta"><span className="match-badge">{recommendation.matchScore}% 맞춤</span><span className="recommendation-source">{isRecommendationLoading ? 'AI 분석 중' : recommendationSource === 'agentria' ? 'AI 분석' : recommendationSource === 'local-fallback' ? '보완 추천' : '규칙 기반'}</span></div></div>
               <h2>{recommendation.headline}</h2>
               <p>{recommendation.description}</p>
               <ul className="outfit-item-list">{recommendation.outfitItems.map((item) => <li key={item}>{item}</li>)}</ul>
               <div className="outfit-tags">{recommendation.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>
-              <button className="text-link" type="button" onClick={refreshRecommendation} disabled={isLoading}>다른 조합 보기 <ArrowRight /></button>
+              <button className="text-link" type="button" onClick={refreshRecommendation} disabled={isBusy}>다른 조합 보기 <ArrowRight /></button>
             </div>
           </article>
 
@@ -500,13 +516,17 @@ export default function Home() {
           <article className="wardrobe-card" id="wardrobe">
             <div className="section-heading"><div><span className="section-kicker">내 옷장</span><h2>추천에 사용할 옷</h2></div><Button variant="outline" size="sm" onClick={() => setShowAddItem((current) => !current)}><Plus /> 옷 추가</Button></div>
             {showAddItem && <form className="add-item-form" onSubmit={addWardrobeItem}><Input value={newItemName} onChange={(event) => setNewItemName(event.target.value)} placeholder="예: 그레이 후드 집업" aria-label="추가할 옷 이름" /><NativeSelect aria-label="추가할 옷 카테고리" value={newItemCategory} onChange={(event) => setNewItemCategory(event.target.value)}><NativeSelectOption value="상의">상의</NativeSelectOption><NativeSelectOption value="하의">하의</NativeSelectOption><NativeSelectOption value="아우터">아우터</NativeSelectOption><NativeSelectOption value="신발">신발</NativeSelectOption><NativeSelectOption value="액세서리">액세서리</NativeSelectOption></NativeSelect><Button type="submit">등록</Button></form>}
-            <div className="wardrobe-list">
-              {wardrobe.map((item) => {
-                const selected = selectedItems.includes(item.id);
-                return <button key={item.id} type="button" className={selected ? 'wardrobe-item selected' : 'wardrobe-item'} onClick={() => toggleWardrobe(item.id)} aria-pressed={selected}><span className="item-color" style={{ backgroundColor: item.color }} /><span><strong>{item.name}</strong><small>{item.category}</small></span><span className="item-check">{selected && <Check />}</span></button>;
+            <div className="wardrobe-groups">
+              {wardrobeCategories.map((category) => {
+                const categoryItems = wardrobe.filter((item) => item.category === category);
+                if (categoryItems.length === 0) return null;
+                return <section className="wardrobe-group" key={category}><div className="wardrobe-group-heading"><strong>{category}</strong><span>{categoryItems.length}벌</span></div><div className="wardrobe-list">{categoryItems.map((item) => {
+                  const selected = selectedItems.includes(item.id);
+                  return <button key={item.id} type="button" className={selected ? 'wardrobe-item selected' : 'wardrobe-item'} onClick={() => toggleWardrobe(item.id)} aria-pressed={selected}><span className="item-color" style={{ backgroundColor: item.color }} /><span><strong>{item.name}</strong><small>{item.category}</small></span><span className="item-check">{selected && <Check />}</span></button>;
+                })}</div></section>;
               })}
             </div>
-            <div className="wardrobe-footer"><span>{selectedItems.length}벌을 추천에 사용 중</span><Button onClick={refreshRecommendation} disabled={isLoading}><RefreshCw /> {isLoading ? '추천 만드는 중' : '추천 새로 받기'}</Button></div>
+            <div className="wardrobe-footer"><span>{selectedItems.length}벌을 추천에 사용 중</span><Button onClick={refreshRecommendation} disabled={isBusy}><RefreshCw /> {isBusy ? '추천 만드는 중' : '추천 새로 받기'}</Button></div>
           </article>
         </section>
 

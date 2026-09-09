@@ -158,6 +158,18 @@ function toWeatherDescription(pty: number, sky: number) {
   return { label: '흐려요', kind: 'cloud' as WeatherKind, weatherCode: 3 };
 }
 
+function estimateApparentTemperature(temperature: number, humidity: number, windSpeedMs: number) {
+  // 단기예보에는 체감온도 항목이 없으므로 습도·풍속을 이용해 근사합니다.
+  // 바람이 강한 추운 날에는 wind-chill, 그 외에는 Steadman 근사를 사용합니다.
+  const windKmh = Math.max(0, windSpeedMs) * 3.6;
+  if (temperature <= 10 && windKmh >= 4.8) {
+    return 13.12 + 0.6215 * temperature - 11.37 * windKmh ** 0.16 + 0.3965 * temperature * windKmh ** 0.16;
+  }
+
+  const vaporPressure = (Math.max(0, Math.min(100, humidity)) / 100) * 6.105 * Math.exp((17.27 * temperature) / (237.7 + temperature));
+  return temperature + 0.33 * vaporPressure - 0.7 * windKmh - 4;
+}
+
 function toKmaGrid(latitude: number, longitude: number) {
   const DEGRAD = Math.PI / 180;
   const RE = 6371.00877;
@@ -205,10 +217,26 @@ async function fetchKmaJson(url: URL, label: string) {
 
   const payload = JSON.parse(responseText) as {
     response?: { header?: { resultCode?: string; resultMsg?: string } };
+    OpenAPI_ServiceResponse?: {
+      cmmMsgHeader?: {
+        errMsg?: string;
+        returnReasonCode?: string;
+        returnAuthMsg?: string;
+      };
+    };
   };
   const resultCode = payload.response?.header?.resultCode;
   if (resultCode && resultCode !== '00' && resultCode !== '0') {
     throw new Error(`KMA ${label} ${resultCode}: ${payload.response?.header?.resultMsg || '요청 실패'}`);
+  }
+
+  // 일부 기상청 서비스는 HTTP 200으로도 인증키 오류를 반환합니다.
+  // 이 응답을 정상 데이터로 처리하면 화면에는 UV 0처럼 보이므로 원인을 로그에 남깁니다.
+  const serviceError = payload.OpenAPI_ServiceResponse?.cmmMsgHeader;
+  if (serviceError?.returnReasonCode) {
+    throw new Error(
+      `KMA ${label} ${serviceError.returnReasonCode}: ${serviceError.errMsg || serviceError.returnAuthMsg || '요청 실패'}`,
+    );
   }
 
   return payload;
@@ -230,27 +258,28 @@ function getUvLabel(value: number) {
   return '낮음';
 }
 
-function getUvBaseTime(now: KstParts) {
-  const slot = Math.floor(now.hour / 3) * 3;
-  return `${dateText(now)}${String(slot).padStart(2, '0')}`;
+function getUvRequestTime(now: KstParts) {
+  // 생활기상지수 V5의 time은 예보 발표시각(YYYYMMDDHH)입니다.
+  return `${dateText(now)}${String(now.hour).padStart(2, '0')}`;
 }
 
 async function fetchUvIndex(serviceKey: string, location: Location, now: KstParts) {
-  const url = new URL('https://apis.data.go.kr/1360000/LivingWthrIdxServiceV4/getUVIdxV4');
+  const url = new URL('https://apis.data.go.kr/1360000/LivingWthrIdxServiceV5/getUVIdxV5');
   const { uvAreaNo } = getLocationMetadata(location);
   url.searchParams.set('serviceKey', normalizeServiceKey(serviceKey));
   url.searchParams.set('pageNo', '1');
   url.searchParams.set('numOfRows', '10');
   url.searchParams.set('dataType', 'JSON');
   url.searchParams.set('areaNo', uvAreaNo);
-  url.searchParams.set('time', getUvBaseTime(now));
+  url.searchParams.set('time', getUvRequestTime(now));
 
   const payload = await fetchKmaJson(url, '생활기상지수');
   const item = getKmaItems(payload)[0];
   if (!item) throw new Error('자외선 지수 데이터가 비어 있습니다.');
 
-  const hourKey = `h${Math.floor(now.hour / 3) * 3}`;
-  const rawValue = item[hourKey] ?? item.h0 ?? item.today;
+  // V5는 발표시각부터 3시간 단위의 h0, h3, h6 ... 값을 제공합니다.
+  // 현재값은 발표시각 기준 h0로 사용하고, 값이 없으면 today를 보완합니다.
+  const rawValue = item.h0 ?? item.today;
   const uvIndex = toNumber(rawValue, 0);
   return { uvIndex, uvLabel: getUvLabel(uvIndex) };
 }
@@ -379,9 +408,10 @@ export async function GET(request: Request) {
         }, { status: 422 });
       }
       const grid = toKmaGrid(latitude, longitude);
+      const nearest = nearestKnownLocation(latitude, longitude);
       location = {
         aliases: [],
-        name: query || '현재 위치',
+        name: query === '현재 위치' ? `현재 위치 · ${nearest.name}` : (query || `현재 위치 · ${nearest.name}`),
         latitude,
         longitude,
         nx: grid.nx,
@@ -421,6 +451,7 @@ export async function GET(request: Request) {
     const currentTemperature = toNumber(currentValues.TMP);
     const currentHumidity = toNumber(currentValues.REH);
     const currentWindSpeed = toNumber(currentValues.WSD);
+    const apparentTemperature = estimateApparentTemperature(currentTemperature, currentHumidity, currentWindSpeed);
     const description = toWeatherDescription(toNumber(currentValues.PTY), toNumber(currentValues.SKY));
     const todayPoints = points.filter((point) => point.date === dateText(now));
     const todayTemperatures = todayPoints
@@ -465,7 +496,7 @@ export async function GET(request: Request) {
       updatedAt: `${String(now.hour).padStart(2, '0')}:${String(now.minute).padStart(2, '0')}`,
       current: {
         temperature: Math.round(currentTemperature),
-        apparentTemperature: Math.round(currentTemperature),
+        apparentTemperature: Math.round(apparentTemperature),
         humidity: Math.round(currentHumidity),
         precipitation: parsePrecipitation(currentValues.PCP),
         precipitationProbability: Math.round(toNumber(currentValues.POP, dailyPrecipitationProbability)),
