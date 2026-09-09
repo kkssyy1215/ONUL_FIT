@@ -1,0 +1,39 @@
+{
+  "location": "서울",
+  "weatherText": "흐리고 비",
+  "temperature": 18.5,
+  "apparentTemperature": 17.2,
+  "riskLevel": "medium",
+  "riskFlags": [
+    "rain"
+  ],
+  "warningText": "비가 예상되므로 외출 시 우산을 준비하세요.",
+  "officialAlert": "",
+  "preparationItems": [
+    "우산",
+    "방수 가능한 신발",
+    "여분의 양말"
+  ],
+  "preparationMessage": "비에 대비해 우산과 방수 가능한 신발을 준비하세요.",
+  "outfitTitle": "비 오는 날의 미니멀 출근 코디",
+  "outfitDescription": "아이보리 니트와 블랙 슬랙스에 네이비 레인코트를 매치한 단정한 출근 코디입니다.",
+  "selectedItemIds": [
+    "top-ivory-knit",
+    "bottom-black-trousers",
+    "shoes-black-loafer",
+    "outer-navy-raincoat"
+  ],
+  "selectedItemNames": [
+    "아이보리 니트",
+    "블랙 슬랙스",
+    "블랙 로퍼",
+    "네이비 레인코트"
+  ],
+  "wearingOrder": [
+    "아이보리 니트",
+    "블랙 슬랙스",
+    "블랙 로퍼",
+    "네이비 레인코트"
+  ],
+  "cautionMessage": "비가 예상되므로 외출 시 우산을 준비하세요. 물웅덩이를 피해 이동하는 것이 좋습니다."
+}
