@@ -206,8 +206,14 @@ export default function Home() {
       if (!response.ok) throw new Error(result.message || '날씨를 불러오지 못했어요.');
       setWeather(result);
       setLocationInput(result.location);
-      await requestRecommendation(result, overrides);
-      setMessage(`${result.location} 날씨로 추천을 업데이트했어요.`);
+      try {
+        await requestRecommendation(result, overrides);
+        setMessage(`${result.location} 날씨와 추천을 업데이트했어요.`);
+      } catch {
+        // Weather and recommendation are independent. Keep the valid weather
+        // result visible even when the external recommendation API is down.
+        setMessage(`${result.location} 날씨는 업데이트했어요. 추천은 잠시 후 다시 시도해 주세요.`);
+      }
       return result;
     } catch (error) {
       setMessage(error instanceof Error ? error.message : '잠시 후 다시 시도해 주세요.');

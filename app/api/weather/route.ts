@@ -129,12 +129,22 @@ function getLatestBaseTime(now: KstParts) {
 
 function toNumber(value: unknown, fallback = 0) {
   const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
+  // KMA uses negative sentinel values such as -999/-998 when a value is
+  // unavailable. They must not leak into the UI as real temperatures or
+  // percentages.
+  return Number.isFinite(parsed) && parsed > -900 ? parsed : fallback;
 }
 
 function parsePrecipitation(value: unknown) {
-  const numbers = String(value ?? '').match(/\d+(?:\.\d+)?/g)?.map(Number) ?? [];
+  const raw = String(value ?? '');
+  if (/-99[89]/.test(raw)) return 0;
+  const numbers = raw.match(/\d+(?:\.\d+)?/g)?.map(Number) ?? [];
   return numbers.length > 0 ? Math.max(...numbers) : 0;
+}
+
+function isUsableWeatherValue(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > -900;
 }
 
 function toWeatherDescription(pty: number, sky: number) {
@@ -358,6 +368,13 @@ export async function GET(request: Request) {
 
     let location: Location | undefined = known;
     if (!location && hasCoordinates) {
+      // The KMA grid is nationwide for South Korea, but coordinates outside
+      // the Korean Peninsula cannot be mapped to a useful domestic forecast.
+      if (latitude < 33 || latitude > 39.5 || longitude < 124 || longitude > 132) {
+        return Response.json({
+          message: '현재 위치가 기상청 국내 예보 범위 밖이에요. 국내 도시를 직접 입력해 주세요.',
+        }, { status: 422 });
+      }
       const grid = toKmaGrid(latitude, longitude);
       location = {
         aliases: [],
@@ -393,6 +410,11 @@ export async function GET(request: Request) {
     const selected = selectPoint(points, now);
     const currentPoint = selected.point;
     const currentValues = currentPoint.values;
+    if (!isUsableWeatherValue(currentValues.TMP)) {
+      return Response.json({
+        message: '현재 위치의 기상청 예보를 찾지 못했어요. 잠시 후 다시 시도하거나 국내 도시를 직접 입력해 주세요.',
+      }, { status: 422 });
+    }
     const currentTemperature = toNumber(currentValues.TMP);
     const currentHumidity = toNumber(currentValues.REH);
     const currentWindSpeed = toNumber(currentValues.WSD);
