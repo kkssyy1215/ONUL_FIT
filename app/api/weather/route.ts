@@ -175,9 +175,12 @@ function toKmaGrid(latitude: number, longitude: number) {
   const olat = OLAT * DEGRAD;
   const sn = Math.log(Math.cos(slat1) / Math.cos(slat2)) /
     Math.log(Math.tan(Math.PI * 0.25 + slat2 * 0.5) / Math.tan(Math.PI * 0.25 + slat1 * 0.5));
-  const sf = Math.tan(Math.PI * 0.25 + slat1 * 0.5);
-  const ro = re * sf ** sn / Math.tan(Math.PI * 0.25 + olat * 0.5) ** sn;
-  const ra = re * Math.tan(Math.PI * 0.25 + latitude * DEGRAD * 0.5) ** -sn;
+  // KMA's Lambert conformal conic formula includes the standard-parallel
+  // correction in `sf`. Omitting the cosine/slope correction sends GPS
+  // coordinates to invalid grids such as ny=498.
+  const sf = Math.tan(Math.PI * 0.25 + slat1 * 0.5) ** sn * Math.cos(slat1) / sn;
+  const ro = re * sf / Math.tan(Math.PI * 0.25 + olat * 0.5) ** sn;
+  const ra = re * sf / Math.tan(Math.PI * 0.25 + latitude * DEGRAD * 0.5) ** sn;
   const theta = longitude * DEGRAD - olon;
   const adjustedTheta = Math.abs(theta) > Math.PI ? (theta < 0 ? theta + 2 * Math.PI : theta - 2 * Math.PI) : theta;
 
