@@ -13,11 +13,11 @@ pnpm dev
 
 날씨는 서버 라우트 `/api/weather/`를 통해 기상청 단기예보 조회서비스와 연결됩니다. 브라우저가 외부 API를 직접 호출하지 않도록 서버에서 데이터를 표준화합니다.
 
-옷차림 추천은 `/api/recommend/`에서 처리합니다. `AGENTRIA_API_URL`을 설정하면 에이전트리아에 배포한 `today_fit_agent` API로 요청을 전달합니다. URL이 비어 있으면 개발 확인을 위해 동일한 입력 구조를 사용하는 로컬 규칙 기반 추천이 동작합니다.
+옷차림 추천은 `/api/recommend/`에서 처리합니다. `AGENTRIA_API_URL`을 설정하면 에이전트리아에 배포한 오늘핏 어빌리티 API로 요청을 전달합니다. URL이 비어 있거나 일부 AI 조합이 실패하면 동일한 입력 구조를 사용하는 로컬 규칙 기반 추천이 동작합니다.
 
 ## 기상청 API 설정
 
-1. [기상청 단기예보 조회서비스](https://www.data.go.kr/data/15084084/openapi.do), [생활기상지수 조회서비스(4.0)](https://www.data.go.kr/data/15085288/openapi.do), [기상특보 조회서비스](https://www.data.go.kr/data/15000415/openapi.do)에서 각각 활용신청을 합니다.
+1. [기상청 단기예보 조회서비스](https://www.data.go.kr/data/15084084/openapi.do), 생활기상지수 조회서비스 V5, [기상특보 조회서비스](https://www.data.go.kr/data/15000415/openapi.do)에서 각각 활용신청을 합니다.
 2. 발급된 일반 인증키(Decoding)를 프로젝트 루트의 `.env.local`에 입력합니다.
 
 ```env
@@ -36,17 +36,28 @@ cp .env.example .env.local
 
 `.env.local`에 에이전트리아 API 주소와 인증값을 입력한 뒤 다시 실행하세요. 인증키는 서버 라우트에서만 사용되며 브라우저 코드에 포함되지 않습니다.
 
-추천 API는 아래 입력 구조를 사용합니다.
+브라우저가 추천 API에 전달하는 입력은 아래 구조를 사용합니다.
 
 ```json
 {
   "weather": { "current": {}, "daily": {}, "hourly": [] },
   "profile": { "gender": "female", "style": "미니멀", "activity": "출근", "sensitivity": "보통" },
-  "wardrobe": [{ "id": "item-1", "name": "네이비 재킷", "category": "아우터", "selected": true }]
+  "wardrobe": [{ "id": "item-1", "name": "네이비 재킷", "category": "아우터", "selected": true }],
+  "refreshToken": 0
 }
 ```
 
-에이전트리아의 응답은 `data` 또는 `result` 안에 `headline`, `description`, `notice`, `matchScore`, `tags`, `essentials`, `outfitItems`를 반환하면 화면에 바로 반영됩니다.
+서버는 이 값을 에이전트리아 Ability Input의 `location`, `gender`, `style`, `activity`, `sensitivity`, `refreshToken`, `weatherText`, `wardrobeText`로 변환합니다. `weatherText`의 풍속 단위는 실제 값과 동일한 `m/s`로 전달합니다.
+
+## Agentria 추천 흐름
+
+1. 사용자 취향 세 요소로 균형 추천·날씨 우선·스타일 우선 조합을 만듭니다.
+2. 날씨 정보를 표준화하고 위험 요소와 준비물을 계산합니다.
+3. 세 조합을 세마포어 3으로 제한해 코디 추천 LLM Function을 병렬 호출합니다.
+4. LLM 결과의 의류 ID를 실제 `wardrobeText`와 대조해 검증합니다.
+5. 최종 응답의 `recommendations` 배열에 최대 세 개의 추천을 담습니다.
+
+웹 서버는 `finalResponse.recommendations`를 화면용 배열로 변환합니다. 일부 LLM 호출만 실패하면 실패한 조합만 로컬 추천으로 대체하고, 전체 어빌리티가 실패해도 세 개의 규칙 기반 추천을 반환합니다.
 
 ## 주요 기능
 

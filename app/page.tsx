@@ -55,6 +55,9 @@ type WeatherData = {
 
 type Essential = { name: string; reason: string; priority: 'required' | 'recommended' };
 type Recommendation = {
+  combinationId: string;
+  strategy: 'balanced' | 'weather_first' | 'style_first';
+  strategyLabel: string;
   headline: string;
   description: string;
   notice: string;
@@ -64,7 +67,7 @@ type Recommendation = {
   outfitItems: string[];
 };
 type RecommendationResponse = {
-  data: Recommendation;
+  data: Recommendation[];
   source?: 'agentria' | 'local' | 'local-fallback';
   warning?: string;
 };
@@ -121,6 +124,9 @@ const defaultWeather: WeatherData = {
 };
 
 const defaultRecommendation: Recommendation = {
+  combinationId: 'combo-1',
+  strategy: 'balanced',
+  strategyLabel: '균형 추천',
   headline: '날씨에 맞는 조합을 준비 중이에요',
   description: '기온과 강수 가능성, 저장한 취향과 옷장을 함께 확인하고 있어요.',
   notice: '외출 전에 최신 날씨를 한 번 더 확인하세요.',
@@ -153,7 +159,8 @@ const dateLabel = new Intl.DateTimeFormat('ko-KR', {
 
 export default function Home() {
   const [weather, setWeather] = useState(defaultWeather);
-  const [recommendation, setRecommendation] = useState(defaultRecommendation);
+  const [recommendations, setRecommendations] = useState<Recommendation[]>([defaultRecommendation]);
+  const [activeRecommendationIndex, setActiveRecommendationIndex] = useState(0);
   const [locationInput, setLocationInput] = useState('서울');
   const [gender, setGender] = useState<'female' | 'male'>('female');
   const [style, setStyle] = useState('미니멀');
@@ -196,7 +203,8 @@ export default function Home() {
       });
       if (!response.ok) throw new Error('추천을 불러오지 못했어요.');
       const result = await response.json() as RecommendationResponse;
-      setRecommendation(result.data);
+      setRecommendations(result.data.length > 0 ? result.data : [defaultRecommendation]);
+      setActiveRecommendationIndex(0);
       setRecommendationSource(result.source ?? 'local');
       return result;
     } finally {
@@ -244,12 +252,13 @@ export default function Home() {
   }, [requestRecommendation]);
 
   const requestWeatherRef = useRef<WeatherRequester>(requestWeather);
-  const recommendationRef = useRef(recommendation);
+  const activeRecommendation = recommendations[activeRecommendationIndex] ?? recommendations[0] ?? defaultRecommendation;
+  const recommendationRef = useRef(activeRecommendation);
 
   useEffect(() => {
     requestWeatherRef.current = requestWeather;
-    recommendationRef.current = recommendation;
-  }, [recommendation, requestWeather]);
+    recommendationRef.current = activeRecommendation;
+  }, [activeRecommendation, requestWeather]);
 
   useEffect(() => {
     const saved = window.localStorage.getItem('onul-fit-preferences');
@@ -450,17 +459,38 @@ export default function Home() {
               <div><Wind /><span>바람<strong>{weather.current.windSpeed} m/s</strong></span></div>
               <div><Sun /><span>자외선<strong>{weather.current.uvLabel}</strong></span></div>
             </div>
-            <div className="weather-note"><EssentialIcon name={recommendation.essentials[0]?.name ?? ''} /><p><strong>{weather.weatherAlert || `${recommendation.essentials[0]?.name ?? '외출 준비'}을(를) 확인하세요.`}</strong><span>{weather.weatherAlert ? '기상청 공식 특보를 확인하고 외출 시 주의하세요.' : recommendation.notice}</span></p></div>
+            <div className="weather-note"><EssentialIcon name={activeRecommendation.essentials[0]?.name ?? ''} /><p><strong>{weather.weatherAlert || `${activeRecommendation.essentials[0]?.name ?? '외출 준비'}을(를) 확인하세요.`}</strong><span>{weather.weatherAlert ? '기상청 공식 특보를 확인하고 외출 시 주의하세요.' : activeRecommendation.notice}</span></p></div>
           </article>
 
           <article className="outfit-card">
             <div className="outfit-copy">
-                <div className="outfit-kicker-row"><div className="section-kicker">오늘의 조합</div><div className="outfit-meta"><span className="match-badge">{recommendation.matchScore}% 맞춤</span><span className="recommendation-source">{isRecommendationLoading ? 'AI 분석 중' : recommendationSource === 'agentria' ? 'AI 분석' : recommendationSource === 'local-fallback' ? '보완 추천' : '규칙 기반'}</span></div></div>
-              <h2>{recommendation.headline}</h2>
-              <p>{recommendation.description}</p>
-              <ul className="outfit-item-list">{recommendation.outfitItems.map((item) => <li key={item}>{item}</li>)}</ul>
-              <div className="outfit-tags">{recommendation.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>
-              <button className="text-link" type="button" onClick={refreshRecommendation} disabled={isBusy}>다른 조합 보기 <ArrowRight /></button>
+              <div className="outfit-variant-tabs" role="tablist" aria-label="코디 추천 기준">
+                {recommendations.map((item, index) => (
+                  <button
+                    key={item.combinationId}
+                    type="button"
+                    role="tab"
+                    aria-selected={activeRecommendationIndex === index}
+                    className={activeRecommendationIndex === index ? 'active' : ''}
+                    onClick={() => setActiveRecommendationIndex(index)}
+                  >
+                    {item.strategyLabel}
+                  </button>
+                ))}
+              </div>
+              <div className="outfit-kicker-row"><div className="section-kicker">오늘의 조합</div><div className="outfit-meta"><span className="match-badge">{activeRecommendation.matchScore}% 맞춤</span><span className="recommendation-source">{isRecommendationLoading ? 'AI 분석 중' : recommendationSource === 'agentria' ? 'AI 분석' : recommendationSource === 'local-fallback' ? '보완 추천' : '규칙 기반'}</span></div></div>
+              <h2>{activeRecommendation.headline}</h2>
+              <p>{activeRecommendation.description}</p>
+              <ul className="outfit-item-list">{activeRecommendation.outfitItems.map((item) => <li key={item}>{item}</li>)}</ul>
+              <div className="outfit-tags">{activeRecommendation.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>
+              <button
+                className="text-link"
+                type="button"
+                onClick={() => setActiveRecommendationIndex((current) => (current + 1) % recommendations.length)}
+                disabled={isBusy || recommendations.length < 2}
+              >
+                다음 조합 보기 <ArrowRight />
+              </button>
             </div>
           </article>
 
@@ -479,9 +509,9 @@ export default function Home() {
           </article>
 
           <article className="essentials-card">
-            <div className="section-heading compact"><div><span className="section-kicker">외출 준비</span><h2>오늘 챙길 것</h2></div><span className="count-label">{recommendation.essentials.length}</span></div>
+            <div className="section-heading compact"><div><span className="section-kicker">외출 준비</span><h2>오늘 챙길 것</h2></div><span className="count-label">{activeRecommendation.essentials.length}</span></div>
             <div className="essential-list">
-              {recommendation.essentials.map((item) => (
+              {activeRecommendation.essentials.map((item) => (
                 <div className={item.priority === 'required' ? 'essential-item required' : 'essential-item'} key={item.name}>
                   <span className="essential-icon"><EssentialIcon name={item.name} /></span><p><strong>{item.name}</strong><small>{item.reason}</small></p>{item.priority === 'required' ? <span>필수</span> : <Check />}
                 </div>

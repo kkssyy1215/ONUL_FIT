@@ -1,7 +1,11 @@
 import { resilientFetch } from '@/lib/resilient-fetch';
 
 type Essential = { name: string; reason: string; priority: 'required' | 'recommended' };
+type RecommendationStrategy = 'balanced' | 'weather_first' | 'style_first';
 type Recommendation = {
+  combinationId: string;
+  strategy: RecommendationStrategy;
+  strategyLabel: string;
   headline: string;
   description: string;
   notice: string;
@@ -36,6 +40,16 @@ type RecommendationInput = {
   refreshToken?: number;
 };
 
+const recommendationStrategies: Array<{
+  combinationId: string;
+  strategy: RecommendationStrategy;
+  strategyLabel: string;
+}> = [
+  { combinationId: 'combo-1', strategy: 'balanced', strategyLabel: '균형 추천' },
+  { combinationId: 'combo-2', strategy: 'weather_first', strategyLabel: '날씨 우선' },
+  { combinationId: 'combo-3', strategy: 'style_first', strategyLabel: '스타일 우선' },
+];
+
 function categoryMatches(category: string, expected: string) {
   const aliases: Record<string, string[]> = {
     top: ['상의', 'top'],
@@ -47,11 +61,15 @@ function categoryMatches(category: string, expected: string) {
   return aliases[expected]?.includes(category.toLowerCase()) ?? false;
 }
 
-function localRecommendation(input: RecommendationInput): Recommendation {
+function localRecommendation(
+  input: RecommendationInput,
+  variant = recommendationStrategies[0],
+  rotationOffset = 0,
+): Recommendation {
   const { current } = input.weather;
   const profile = input.profile;
   const rainy = current.kind === 'rain' || current.kind === 'storm' || current.precipitationProbability >= 40 || current.precipitation > 0;
-  const snowCodes = [71, 73, 75, 77, 85, 86];
+  const snowCodes = [68, 71, 73, 75, 77, 85, 86];
   const snowy = current.kind === 'snow' || snowCodes.includes(current.weatherCode);
   const hot = current.apparentTemperature >= 28 || (profile.sensitivity === '더위를 많이 탐' && current.apparentTemperature >= 24);
   const cold = current.apparentTemperature <= 8 || (profile.sensitivity === '추위를 많이 탐' && current.apparentTemperature <= 12);
@@ -67,7 +85,7 @@ function localRecommendation(input: RecommendationInput): Recommendation {
   if (essentials.length < 3) essentials.push({ name: '작은 가방', reason: '외출 준비물을 가볍게 보관', priority: 'recommended' });
 
   const selected = input.wardrobe.filter((item) => item.selected);
-  const rotation = Math.max(0, Math.floor(input.refreshToken || 0));
+  const rotation = Math.max(0, Math.floor(input.refreshToken || 0)) + rotationOffset;
   const chooseOwned = (category: string, keywords: string[]) => {
     const candidates = selected.filter((item) => categoryMatches(item.category, category));
     const matches = candidates.filter((item) => keywords.some((keyword) => item.name.toLowerCase().includes(keyword.toLowerCase())));
@@ -117,14 +135,21 @@ function localRecommendation(input: RecommendationInput): Recommendation {
   const categoryCount = new Set(outfitItems).size;
 
   return {
+    ...variant,
     headline,
     description,
     notice: rainy ? '비가 오는 시간대에는 미끄러운 길을 주의하세요.' : hot ? '한낮의 장시간 야외 활동은 피하고 물을 자주 마시세요.' : '시간대별 기온을 확인하고 얇은 겉옷을 조절하세요.',
     matchScore: Math.min(98, 72 + Math.min(selected.length, 6) * 3 + Math.min(selectedCategoryCount, categoryCount) * 3),
-    tags: [profile.style, profile.activity, seasonTag],
+    tags: [variant.strategyLabel, profile.style, profile.activity, seasonTag],
     essentials: essentials.slice(0, 3),
     outfitItems: Array.from(new Set(outfitItems)).slice(0, 5),
   };
+}
+
+function localRecommendations(input: RecommendationInput) {
+  return recommendationStrategies.map((strategy, index) =>
+    localRecommendation(input, strategy, index),
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -141,26 +166,23 @@ function buildAgentriaInput(input: RecommendationInput) {
   };
 
   const location = input.weather.location || '현재 위치';
-  const genderLabel = input.profile.gender === 'female' ? '여성' : '남성';
-
-  const requestText =
-    `오늘 ${location} 날씨에 맞는 ${genderLabel} ` +
-    `${input.profile.style} 스타일의 ${input.profile.activity} 코디를 추천해줘. ` +
-    `온도 민감도는 ${input.profile.sensitivity}이야.` +
-    (input.refreshToken ? ` 이전 결과와 다른 조합을 우선해서 추천해줘. 새로고침 회차는 ${input.refreshToken}번이야.` : '');
 
   // 에이전트리아의 날씨 표준화 Python 노드가 읽을 수 있도록
-  // 웹페이지의 정규화된 날씨 데이터를 기존 weatherText 입력 스키마로 변환합니다.
+  // 웹페이지의 정규화된 날씨 데이터를 weatherText 입력 스키마로 변환합니다.
   const weatherText = JSON.stringify({
     location,
-    current_units: { wind_speed_10m: 'km/h' },
+    current_units: { wind_speed_10m: 'm/s' },
     current: {
       temperature_2m: input.weather.current.temperature,
       apparent_temperature: input.weather.current.apparentTemperature,
       relative_humidity_2m: input.weather.current.humidity,
       precipitation: input.weather.current.precipitation,
+      precipitation_probability: input.weather.current.precipitationProbability,
       wind_speed_10m: input.weather.current.windSpeed,
       weather_code: input.weather.current.weatherCode,
+      uv_index: input.weather.current.uvIndex,
+      label: input.weather.current.label,
+      kind: input.weather.current.kind,
     },
     daily: {
       temperature_2m_max: [input.weather.daily.maxTemperature],
@@ -200,7 +222,16 @@ function buildAgentriaInput(input: RecommendationInput) {
       }),
   );
 
-  return { requestText, weatherText, wardrobeText };
+  return {
+    location,
+    gender: input.profile.gender,
+    style: input.profile.style,
+    activity: input.profile.activity,
+    sensitivity: input.profile.sensitivity,
+    refreshToken: Math.max(0, Math.floor(input.refreshToken || 0)),
+    weatherText,
+    wardrobeText,
+  };
 }
 
 function parseJsonOrText(value: string): unknown {
@@ -230,7 +261,7 @@ function delay(milliseconds: number) {
 async function runAgentriaAbility(
   endpoint: string,
   apiKey: string,
-  params: Record<string, string>,
+  params: Record<string, string | number>,
 ) {
   const headers = { 'X-API-KEY': apiKey };
   // Agentria는 params_json 한 필드를 받으므로 boundary가 필요한 multipart보다
@@ -309,6 +340,8 @@ type FinalResponse = {
   request?: { style?: string; activity?: string };
   risk?: { warningText?: string };
   preparation?: { items?: unknown[]; message?: string };
+  recommendations?: unknown[];
+  // 이전 어빌리티 응답도 배포 전환 중에는 읽을 수 있도록 유지합니다.
   outfit?: {
     title?: string;
     description?: string;
@@ -342,7 +375,7 @@ function findFinalResponse(value: unknown, depth = 0): FinalResponse | null {
 
   if (!isRecord(value)) return null;
 
-  if (value.outfit || value.preparation || value.risk) {
+  if (value.recommendations || value.outfit || value.preparation || value.risk) {
     return value as FinalResponse;
   }
 
@@ -358,48 +391,103 @@ function findFinalResponse(value: unknown, depth = 0): FinalResponse | null {
   return null;
 }
 
-function mapAgentriaResponse(raw: unknown, fallback: Recommendation): Recommendation {
+function stringArray(value: unknown) {
+  return Array.isArray(value)
+    ? value.map(String).filter((item) => item.trim().length > 0)
+    : [];
+}
+
+function mapAgentriaResponse(raw: unknown, fallback: Recommendation[]) {
   const result = findFinalResponse(raw);
-  if (!result) return fallback;
+  if (!result) return { recommendations: fallback, aiRecommendationCount: 0 };
 
-  const preparationItems = Array.isArray(result.preparation?.items)
-    ? result.preparation.items.map(String)
-    : [];
-  const selectedItemNames = Array.isArray(result.outfit?.selectedItemNames)
-    ? result.outfit.selectedItemNames.map(String)
-    : [];
-  const unmatchedCategories = Array.isArray(result.outfit?.unmatchedCategories)
-    ? result.outfit.unmatchedCategories
-    : [];
+  const preparationItems = stringArray(result.preparation?.items);
+  const essentials = preparationItems.length > 0
+    ? preparationItems.slice(0, 3).map((name, index): Essential => ({
+      name,
+      reason: result.preparation?.message || '오늘 날씨에 필요한 준비물이에요.',
+      priority: index === 0 ? 'required' : 'recommended',
+    }))
+    : null;
 
-  return {
-    headline: result.outfit?.title || fallback.headline,
-    description: result.outfit?.description || fallback.description,
-    notice: result.outfit?.cautionMessage || result.risk?.warningText || fallback.notice,
-    matchScore: Math.max(60, 95 - unmatchedCategories.length * 10),
-    tags: [result.request?.style, result.request?.activity].filter(
-      (value): value is string => Boolean(value),
-    ),
-    essentials: preparationItems.length > 0
-      ? preparationItems.slice(0, 3).map((name, index) => ({
-        name,
-        reason: result.preparation?.message || '오늘 날씨에 필요한 준비물이에요.',
-        priority: index === 0 ? 'required' : 'recommended',
-      }))
-      : fallback.essentials,
-    outfitItems: selectedItemNames.length > 0 ? selectedItemNames : fallback.outfitItems,
-  };
+  const legacyRecommendation = result.outfit
+    ? [{
+      combinationId: 'combo-1',
+      strategy: 'balanced',
+      strategyLabel: '균형 추천',
+      success: true,
+      outfitTitle: result.outfit.title,
+      outfitDescription: result.outfit.description,
+      selectedItemNames: result.outfit.selectedItemNames,
+      cautionMessage: result.outfit.cautionMessage,
+      unmatchedCategories: result.outfit.unmatchedCategories,
+    }]
+    : [];
+  const rawRecommendations = Array.isArray(result.recommendations)
+    ? result.recommendations
+    : legacyRecommendation;
+
+  let aiRecommendationCount = 0;
+  const recommendations = recommendationStrategies.map((strategy, index) => {
+    const matchedByIdentity = rawRecommendations.find((candidate) =>
+      isRecord(candidate) && (
+        candidate.combinationId === strategy.combinationId ||
+        candidate.strategy === strategy.strategy
+      ),
+    );
+    const candidate = matchedByIdentity ?? rawRecommendations[index];
+    const localFallback = fallback[index] ?? fallback[0];
+    if (!isRecord(candidate) || candidate.success === false) return localFallback;
+
+    const selectedItemNames = stringArray(candidate.selectedItemNames);
+    const headline = typeof candidate.outfitTitle === 'string'
+      ? candidate.outfitTitle.trim()
+      : '';
+    const description = typeof candidate.outfitDescription === 'string'
+      ? candidate.outfitDescription.trim()
+      : '';
+    if (!headline || selectedItemNames.length === 0) return localFallback;
+
+    aiRecommendationCount += 1;
+    const unmatchedCategories = stringArray(candidate.unmatchedCategories);
+    const numericScore = Number(candidate.matchScore);
+    const matchScore = Number.isFinite(numericScore)
+      ? Math.max(0, Math.min(100, Math.round(numericScore)))
+      : Math.max(0, 95 - unmatchedCategories.length * 10);
+    const strategyLabel = typeof candidate.strategyLabel === 'string' && candidate.strategyLabel.trim()
+      ? candidate.strategyLabel.trim()
+      : strategy.strategyLabel;
+    const cautionMessage = typeof candidate.cautionMessage === 'string'
+      ? candidate.cautionMessage.trim()
+      : '';
+
+    return {
+      ...strategy,
+      strategyLabel,
+      headline,
+      description: description || localFallback.description,
+      notice: cautionMessage || result.risk?.warningText || localFallback.notice,
+      matchScore,
+      tags: [strategyLabel, result.request?.style, result.request?.activity].filter(
+        (value): value is string => Boolean(value),
+      ),
+      essentials: essentials ?? localFallback.essentials,
+      outfitItems: selectedItemNames,
+    };
+  });
+
+  return { recommendations, aiRecommendationCount };
 }
 
 export async function POST(request: Request) {
-  let fallback: Recommendation | null = null;
+  let fallback: Recommendation[] | null = null;
   try {
     const input = await request.json() as RecommendationInput;
     if (!input?.weather?.current || !input?.profile || !Array.isArray(input?.wardrobe)) {
       return Response.json({ message: '추천에 필요한 입력값이 부족해요.' }, { status: 400 });
     }
 
-    fallback = localRecommendation(input);
+    fallback = localRecommendations(input);
     const endpoint = process.env.AGENTRIA_API_URL;
     if (!endpoint) return Response.json({ data: fallback, source: 'local' });
 
@@ -408,7 +496,15 @@ export async function POST(request: Request) {
 
     const agentriaInput = buildAgentriaInput(input);
     const raw = await runAgentriaAbility(endpoint, apiKey, agentriaInput);
-    return Response.json({ data: mapAgentriaResponse(raw, fallback), source: 'agentria' });
+    const mapped = mapAgentriaResponse(raw, fallback);
+    const usedFallbackCount = recommendationStrategies.length - mapped.aiRecommendationCount;
+    return Response.json({
+      data: mapped.recommendations,
+      source: mapped.aiRecommendationCount > 0 ? 'agentria' : 'local-fallback',
+      warning: usedFallbackCount > 0
+        ? `AI 추천 ${usedFallbackCount}개를 날씨·취향·옷장 기반 보완 추천으로 대체했어요.`
+        : undefined,
+    });
   } catch (error) {
     console.error('Recommendation API error', error);
     if (fallback) {
