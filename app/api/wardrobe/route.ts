@@ -76,8 +76,19 @@ async function runWardrobeAbility(
   apiKey: string,
   params: Record<string, string>,
 ) {
-  const headers = { 'X-API-KEY': apiKey };
-  const formBody = new URLSearchParams({ params_json: JSON.stringify(params) });
+  // Workerd/Vinext의 URLSearchParams·FormData 직렬화는 Agentria에서
+  // 간헐적으로 500을 일으킬 수 있어 multipart 본문을 직접 만듭니다.
+  const boundary = `----onul-fit-wardrobe-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const headers = {
+    'X-API-KEY': apiKey,
+    'Content-Type': `multipart/form-data; boundary=${boundary}`,
+  };
+  const formBody = [
+    `--${boundary}\r\n`,
+    'Content-Disposition: form-data; name="params_json"\r\n\r\n',
+    JSON.stringify(params),
+    `\r\n--${boundary}--\r\n`,
+  ].join('');
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 60_000);
   let runResponse: Response;
@@ -114,6 +125,10 @@ async function runWardrobeAbility(
     const statusText = await statusResponse.text();
 
     if (!statusResponse.ok) {
+      if (statusResponse.status === 404) {
+        await delay(1_000);
+        continue;
+      }
       throw new Error(
         `Wardrobe status error ${statusResponse.status}: ${statusText.slice(0, 240)}`,
       );
@@ -136,6 +151,28 @@ async function runWardrobeAbility(
   }
 
   throw new Error('옷장 API 응답 대기 시간이 초과되었습니다.');
+}
+
+async function runWardrobeThroughNodeProxy(
+  proxyUrl: string,
+  params: Record<string, string>,
+) {
+  const response = await resilientFetch(
+    `${proxyUrl.replace(/\/+$/, '')}/run`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ability: 'wardrobe', params }),
+    },
+    { timeoutMs: 180_000, retries: 0 },
+  );
+
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(`Wardrobe proxy error ${response.status}: ${text.slice(0, 240)}`);
+  }
+
+  return parseJsonOrText(text);
 }
 
 function findWardrobeResult(value: unknown, depth = 0): Record<string, unknown> | null {
@@ -211,12 +248,13 @@ function getWardrobeApiConfig() {
     apiKey:
       process.env.AGENTRIA_WARDROBE_API_KEY ||
       process.env.AGENTRIA_API_KEY,
+    nodeProxyUrl: process.env.AGENTRIA_NODE_PROXY_URL,
   };
 }
 
 export async function GET() {
   try {
-    const { endpoint, apiKey } = getWardrobeApiConfig();
+    const { endpoint, apiKey, nodeProxyUrl } = getWardrobeApiConfig();
     if (!endpoint || !apiKey) {
       return Response.json(
         { message: '옷장 목록 조회 API 연결 정보가 설정되지 않았습니다.' },
@@ -226,10 +264,10 @@ export async function GET() {
 
     // 저장과 조회가 통합된 동일한 Ability를 사용합니다.
     // Ability 쪽에서 Name이 비어 있으면 db_list만 실행하도록 분기해야 합니다.
-    const raw = await runWardrobeAbility(endpoint, apiKey, {
-      Name: '',
-      category: '',
-    });
+    const params = { Name: '', category: '' };
+    const raw = nodeProxyUrl
+      ? await runWardrobeThroughNodeProxy(nodeProxyUrl, params)
+      : await runWardrobeAbility(endpoint, apiKey, params);
     const result = normalizeWardrobeResult(raw);
     return Response.json({ data: result, source: 'agentria' });
   } catch (error) {
@@ -260,7 +298,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const { endpoint, apiKey } = getWardrobeApiConfig();
+    const { endpoint, apiKey, nodeProxyUrl } = getWardrobeApiConfig();
     if (!endpoint || !apiKey) {
       return Response.json(
         { message: '옷장 API 연결 정보가 설정되지 않았습니다.' },
@@ -268,10 +306,13 @@ export async function POST(request: Request) {
       );
     }
 
-    const raw = await runWardrobeAbility(endpoint, apiKey, {
+    const params = {
       Name: name,
       category,
-    });
+    };
+    const raw = nodeProxyUrl
+      ? await runWardrobeThroughNodeProxy(nodeProxyUrl, params)
+      : await runWardrobeAbility(endpoint, apiKey, params);
     const result = normalizeWardrobeResult(raw);
 
     return Response.json({ data: result, source: 'agentria' });

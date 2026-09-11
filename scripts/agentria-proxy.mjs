@@ -51,9 +51,14 @@ function getRequestId(value) {
 
 const delay = (milliseconds) => new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
 
-async function runAgentria(params) {
-  const endpoint = process.env.AGENTRIA_API_URL;
-  const apiKey = process.env.AGENTRIA_API_KEY;
+async function runAgentria(params, ability = 'main') {
+  const isWardrobe = ability === 'wardrobe';
+  const endpoint = isWardrobe
+    ? process.env.AGENTRIA_WARDROBE_API_URL
+    : process.env.AGENTRIA_API_URL;
+  const apiKey = isWardrobe
+    ? process.env.AGENTRIA_WARDROBE_API_KEY || process.env.AGENTRIA_API_KEY
+    : process.env.AGENTRIA_API_KEY;
   if (!endpoint || !apiKey) throw new Error('Agentria API 환경 변수가 설정되지 않았습니다.');
 
   const form = new FormData();
@@ -132,7 +137,8 @@ const server = createServer(async (request, response) => {
 
   try {
     const body = await readJsonBody(request);
-    const result = await runAgentria(body.params ?? {});
+    const ability = body.ability === 'wardrobe' ? 'wardrobe' : 'main';
+    const result = await runAgentria(body.params ?? {}, ability);
     response.end(JSON.stringify(result));
   } catch (error) {
     console.error('Agentria proxy error', error);
