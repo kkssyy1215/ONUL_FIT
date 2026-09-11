@@ -323,7 +323,7 @@ export default function Home() {
       try {
         const parsed = JSON.parse(saved) as {
           gender?: 'female' | 'male'; style?: string; activity?: string; sensitivity?: string;
-          selectedItems?: string[]; location?: string;
+          selectedItems?: string[]; location?: string; wardrobe?: WardrobeItem[];
         };
         nextGender = parsed.gender ?? nextGender;
         nextStyle = parsed.style ?? nextStyle;
@@ -331,12 +331,25 @@ export default function Home() {
         nextSensitivity = parsed.sensitivity ?? nextSensitivity;
         savedSelectedItems = parsed.selectedItems;
         nextLocation = parsed.location ?? nextLocation;
+        if (Array.isArray(parsed.wardrobe)) {
+          nextWardrobe = parsed.wardrobe.filter((item) => (
+            item
+            && typeof item.id === 'string'
+            && typeof item.name === 'string'
+            && typeof item.category === 'string'
+          ));
+          nextSelected = savedSelectedItems
+            ? nextWardrobe.filter((item) => savedSelectedItems?.includes(item.id)).map((item) => item.id)
+            : nextWardrobe.filter((item) => item.selected !== false).map((item) => item.id);
+        }
         queueMicrotask(() => {
           setGender(nextGender);
           setStyle(nextStyle);
           setActivity(nextActivity);
           setSensitivity(nextSensitivity);
           setLocationInput(nextLocation);
+          setWardrobe(nextWardrobe);
+          setSelectedItems(nextSelected);
         });
       } catch {
         window.localStorage.removeItem('onul-fit-preferences');
@@ -352,7 +365,11 @@ export default function Home() {
           : nextWardrobe.filter((item) => item.selected !== false).map((item) => item.id);
         setSelectedItems(nextSelected);
       } catch {
-        setMessage('옷장 DB를 불러오지 못했어요. 옷장 API 연결을 확인해 주세요.');
+        setMessage(
+          nextWardrobe.length > 0
+            ? '최근에 불러온 옷장을 보여드리고 있어요.'
+            : '옷장을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.',
+        );
       }
 
       void requestWeatherRef.current(nextLocation, undefined, {
@@ -365,9 +382,9 @@ export default function Home() {
   useEffect(() => {
     if (!storageReady) return;
     window.localStorage.setItem('onul-fit-preferences', JSON.stringify({
-      gender, style, activity, sensitivity, selectedItems, location: weather.location,
+      gender, style, activity, sensitivity, selectedItems, location: weather.location, wardrobe,
     }));
-  }, [storageReady, gender, style, activity, sensitivity, selectedItems, weather.location]);
+  }, [storageReady, gender, style, activity, sensitivity, selectedItems, wardrobe, weather.location]);
 
   useEffect(() => {
     const context = (document as Document & { modelContext?: ModelContext }).modelContext;
