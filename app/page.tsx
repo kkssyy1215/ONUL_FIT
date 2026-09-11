@@ -166,26 +166,7 @@ const defaultRecommendation: Recommendation = {
   outfitItems: ['얇은 상의', '가벼운 아우터', '긴 바지', '스니커즈'],
 };
 
-const initialWardrobe: WardrobeItem[] = [
-  { id: 'cream-knit', name: '크림 코튼 니트', category: '상의', color: '#e8e2d3', warmthLevel: 4, styleTags: ['미니멀', '캐주얼'], activityTags: ['출근', '데이트'] },
-  { id: 'blue-linen-shirt', name: '블루 린넨 셔츠', category: '상의', color: '#9db7ca', warmthLevel: 1, styleTags: ['미니멀', '오피스'], activityTags: ['출근', '여행'] },
-  { id: 'gray-hoodie', name: '그레이 후드 집업', category: '상의', color: '#aab3ba', warmthLevel: 3, styleTags: ['캐주얼', '스트릿'], activityTags: ['등교', '운동'] },
-  { id: 'white-tshirt', name: '화이트 기능성 반팔', category: '상의', color: '#f3f2ed', warmthLevel: 1, styleTags: ['스포티', '캐주얼'], activityTags: ['운동', '여행'] },
-  { id: 'charcoal-pants', name: '차콜 스트레이트 팬츠', category: '하의', color: '#4b4d50', warmthLevel: 3, styleTags: ['미니멀', '오피스'], activityTags: ['출근', '데이트'] },
-  { id: 'beige-chino', name: '베이지 코튼 치노', category: '하의', color: '#bcae91', warmthLevel: 2, styleTags: ['캐주얼', '미니멀'], activityTags: ['등교', '여행'] },
-  { id: 'black-jogger', name: '블랙 기능성 조거 팬츠', category: '하의', color: '#303338', warmthLevel: 2, styleTags: ['스포티', '스트릿'], activityTags: ['운동', '여행'] },
-  { id: 'rain-jacket', name: '네이비 레인 재킷', category: '아우터', color: '#263951', warmthLevel: 3, waterproof: true, styleTags: ['미니멀', '스포티'], activityTags: ['출근', '여행'] },
-  { id: 'camel-coat', name: '카멜 울 코트', category: '아우터', color: '#9a7152', warmthLevel: 5, styleTags: ['오피스', '페미닌'], activityTags: ['출근', '데이트'] },
-  { id: 'black-padding', name: '블랙 경량 패딩', category: '아우터', color: '#25282d', warmthLevel: 5, waterproof: true, styleTags: ['캐주얼', '스포티'], activityTags: ['등교', '여행'] },
-  { id: 'white-sneakers', name: '화이트 스니커즈', category: '신발', color: '#f2f0ea', warmthLevel: 1, styleTags: ['캐주얼', '미니멀'], activityTags: ['등교', '여행'] },
-  { id: 'black-loafers', name: '블랙 로퍼', category: '신발', color: '#24272b', warmthLevel: 2, styleTags: ['오피스', '미니멀'], activityTags: ['출근', '데이트'] },
-  { id: 'black-waterproof-boots', name: '블랙 방수 부츠', category: '신발', color: '#1f2328', warmthLevel: 4, waterproof: true, styleTags: ['미니멀', '스트릿'], activityTags: ['출근', '여행'] },
-  { id: 'running-shoes', name: '그레이 러닝화', category: '신발', color: '#7b858c', warmthLevel: 1, styleTags: ['스포티'], activityTags: ['운동', '여행'] },
-  { id: 'folding-umbrella', name: '검정 접이식 우산', category: '액세서리', color: '#34383d', warmthLevel: 1, waterproof: true, styleTags: ['미니멀'], activityTags: ['출근', '등교', '여행'] },
-];
-
 const styles = ['미니멀', '캐주얼', '오피스', '스트릿', '페미닌', '스포티'];
-const itemColors: Record<string, string> = { '상의': '#9db7ca', '하의': '#53585f', '아우터': '#263951', '신발': '#e9e5da', '액세서리': '#cf8a64' };
 const wardrobeCategories = ['상의', '하의', '아우터', '신발', '액세서리'];
 const wardrobeCategoryEmoji: Record<string, string> = { '상의': '👕', '하의': '👖', '아우터': '🧥', '신발': '👟', '액세서리': '👜' };
 
@@ -212,8 +193,8 @@ export default function Home() {
   const [style, setStyle] = useState('미니멀');
   const [activity, setActivity] = useState('출근');
   const [sensitivity, setSensitivity] = useState('보통');
-  const [wardrobe, setWardrobe] = useState(initialWardrobe);
-  const [selectedItems, setSelectedItems] = useState(initialWardrobe.map((item) => item.id));
+  const [wardrobe, setWardrobe] = useState<WardrobeItem[]>([]);
+  const [selectedItems, setSelectedItems] = useState<string[]>([]);
   const [wardrobeSearch, setWardrobeSearch] = useState('');
   const [wardrobeColorFilters, setWardrobeColorFilters] = useState<Record<string, string>>({});
   const [newItemName, setNewItemName] = useState('');
@@ -260,6 +241,17 @@ export default function Home() {
       setIsRecommendationLoading(false);
     }
   }, [activity, gender, sensitivity, selectedItems, style, wardrobe]);
+
+  const requestWardrobe = useCallback(async () => {
+    const response = await fetch('/api/wardrobe/');
+    const result = await response.json() as WardrobeResponse;
+    if (!response.ok) throw new Error(result.message || '옷장 목록을 불러오지 못했어요.');
+
+    const items = result.data.wardrobeItems;
+    setWardrobe(items);
+    setSelectedItems(items.filter((item) => item.selected !== false).map((item) => item.id));
+    return items;
+  }, []);
 
   const requestWeather = useCallback(async (
     query: string,
@@ -322,44 +314,28 @@ export default function Home() {
     let nextStyle = '미니멀';
     let nextActivity = '출근';
     let nextSensitivity = '보통';
-    let nextWardrobe = initialWardrobe;
-    let nextSelected = initialWardrobe.map((item) => item.id);
+    let nextWardrobe: WardrobeItem[] = [];
+    let nextSelected: string[] = [];
+    let savedSelectedItems: string[] | undefined;
     let nextLocation = '서울';
 
     if (saved) {
       try {
         const parsed = JSON.parse(saved) as {
           gender?: 'female' | 'male'; style?: string; activity?: string; sensitivity?: string;
-          wardrobe?: WardrobeItem[]; selectedItems?: string[]; location?: string; wardrobeVersion?: number;
+          selectedItems?: string[]; location?: string;
         };
         nextGender = parsed.gender ?? nextGender;
         nextStyle = parsed.style ?? nextStyle;
         nextActivity = parsed.activity ?? nextActivity;
         nextSensitivity = parsed.sensitivity ?? nextSensitivity;
-        if (parsed.wardrobeVersion === 2) {
-          nextWardrobe = parsed.wardrobe ?? nextWardrobe;
-          nextSelected = parsed.selectedItems ?? nextSelected;
-        } else {
-          // 기존 사용자가 추가한 옷은 보존하면서, 다양화된 기본 옷장을 한 번만 병합합니다.
-          const savedWardrobe = parsed.wardrobe ?? [];
-          const savedById = new Map(savedWardrobe.map((item) => [item.id, item]));
-          nextWardrobe = [
-            ...initialWardrobe.map((item) => savedById.get(item.id) ?? item),
-            ...savedWardrobe.filter((item) => !initialWardrobe.some((base) => base.id === item.id)),
-          ];
-          nextSelected = Array.from(new Set([
-            ...initialWardrobe.map((item) => item.id),
-            ...(parsed.selectedItems ?? []),
-          ]));
-        }
+        savedSelectedItems = parsed.selectedItems;
         nextLocation = parsed.location ?? nextLocation;
         queueMicrotask(() => {
           setGender(nextGender);
           setStyle(nextStyle);
           setActivity(nextActivity);
           setSensitivity(nextSensitivity);
-          setWardrobe(nextWardrobe);
-          setSelectedItems(nextSelected);
           setLocationInput(nextLocation);
         });
       } catch {
@@ -368,18 +344,30 @@ export default function Home() {
     }
 
     queueMicrotask(() => setStorageReady(true));
-    void requestWeatherRef.current(nextLocation, undefined, {
-      gender: nextGender, style: nextStyle, activity: nextActivity, sensitivity: nextSensitivity,
-      wardrobe: nextWardrobe, selectedItems: nextSelected,
-    }).catch(() => undefined);
-  }, []);
+    void (async () => {
+      try {
+        nextWardrobe = await requestWardrobe();
+        nextSelected = savedSelectedItems
+          ? nextWardrobe.filter((item) => savedSelectedItems?.includes(item.id)).map((item) => item.id)
+          : nextWardrobe.filter((item) => item.selected !== false).map((item) => item.id);
+        setSelectedItems(nextSelected);
+      } catch {
+        setMessage('옷장 DB를 불러오지 못했어요. 옷장 API 연결을 확인해 주세요.');
+      }
+
+      void requestWeatherRef.current(nextLocation, undefined, {
+        gender: nextGender, style: nextStyle, activity: nextActivity, sensitivity: nextSensitivity,
+        wardrobe: nextWardrobe, selectedItems: nextSelected,
+      }).catch(() => undefined);
+    })();
+  }, [requestWardrobe]);
 
   useEffect(() => {
     if (!storageReady) return;
     window.localStorage.setItem('onul-fit-preferences', JSON.stringify({
-      wardrobeVersion: 2, gender, style, activity, sensitivity, wardrobe, selectedItems, location: weather.location,
+      gender, style, activity, sensitivity, selectedItems, location: weather.location,
     }));
-  }, [storageReady, gender, style, activity, sensitivity, wardrobe, selectedItems, weather.location]);
+  }, [storageReady, gender, style, activity, sensitivity, selectedItems, weather.location]);
 
   useEffect(() => {
     const context = (document as Document & { modelContext?: ModelContext }).modelContext;
@@ -442,7 +430,7 @@ export default function Home() {
     if (!name) return;
 
     setIsWardrobeSaving(true);
-    setMessage(`${name}을(를) 옷장 DB에 저장하고 있어요.`);
+    setMessage(`${name}을(를) 옷장에 저장하고 있어요.`);
 
     try {
       const response = await fetch('/api/wardrobe/', {
@@ -662,7 +650,7 @@ export default function Home() {
                 <Button variant="outline" size="sm" disabled={isWardrobeSaving} onClick={() => setShowAddItem((current) => !current)}><Plus /> 옷 추가</Button>
               </div>
             </div>
-            {showAddItem && <form className="add-item-form" onSubmit={addWardrobeItem}><Input value={newItemName} disabled={isWardrobeSaving} onChange={(event) => setNewItemName(event.target.value)} placeholder="예: 그레이 후드 집업" aria-label="추가할 옷 이름" /><NativeSelect aria-label="추가할 옷 카테고리" value={newItemCategory} disabled={isWardrobeSaving} onChange={(event) => setNewItemCategory(event.target.value)}><NativeSelectOption value="상의">상의</NativeSelectOption><NativeSelectOption value="하의">하의</NativeSelectOption><NativeSelectOption value="아우터">아우터</NativeSelectOption><NativeSelectOption value="신발">신발</NativeSelectOption><NativeSelectOption value="액세서리">액세서리</NativeSelectOption></NativeSelect><Button type="submit" disabled={isWardrobeSaving}>{isWardrobeSaving ? '저장 중' : 'DB에 저장'}</Button></form>}
+            {showAddItem && <form className="add-item-form" onSubmit={addWardrobeItem}><Input value={newItemName} disabled={isWardrobeSaving} onChange={(event) => setNewItemName(event.target.value)} placeholder="예: 그레이 후드 집업" aria-label="추가할 옷 이름" /><NativeSelect aria-label="추가할 옷 카테고리" value={newItemCategory} disabled={isWardrobeSaving} onChange={(event) => setNewItemCategory(event.target.value)}><NativeSelectOption value="상의">상의</NativeSelectOption><NativeSelectOption value="하의">하의</NativeSelectOption><NativeSelectOption value="아우터">아우터</NativeSelectOption><NativeSelectOption value="신발">신발</NativeSelectOption><NativeSelectOption value="액세서리">액세서리</NativeSelectOption></NativeSelect><Button type="submit" disabled={isWardrobeSaving}>{isWardrobeSaving ? '저장 중' : '옷장에 저장'}</Button></form>}
             <div className="wardrobe-toolbar">
               <label className="wardrobe-search">
                 <Search aria-hidden="true" />

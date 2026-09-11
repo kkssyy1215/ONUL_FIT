@@ -205,6 +205,41 @@ function normalizeWardrobeResult(raw: unknown): WardrobeResult {
   };
 }
 
+function getWardrobeApiConfig() {
+  return {
+    endpoint: process.env.AGENTRIA_WARDROBE_API_URL,
+    listEndpoint:
+      process.env.AGENTRIA_WARDROBE_LIST_API_URL ||
+      process.env.AGENTRIA_WARDROBE_API_URL,
+    apiKey:
+      process.env.AGENTRIA_WARDROBE_API_KEY ||
+      process.env.AGENTRIA_API_KEY,
+  };
+}
+
+export async function GET() {
+  try {
+    const { listEndpoint, apiKey } = getWardrobeApiConfig();
+    if (!listEndpoint || !apiKey) {
+      return Response.json(
+        { message: '옷장 목록 조회 API 연결 정보가 설정되지 않았습니다.' },
+        { status: 503 },
+      );
+    }
+
+    // 목록 조회 Ability는 입력 없이 DB의 전체 wardrobeItems를 반환합니다.
+    const raw = await runWardrobeAbility(listEndpoint, apiKey, {});
+    const result = normalizeWardrobeResult(raw);
+    return Response.json({ data: result, source: 'agentria' });
+  } catch (error) {
+    console.error('Wardrobe list API error', error);
+    return Response.json(
+      { message: '옷장 목록을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.' },
+      { status: 502 },
+    );
+  }
+}
+
 export async function POST(request: Request) {
   try {
     const input = await request.json() as { name?: unknown; category?: unknown };
@@ -219,8 +254,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const endpoint = process.env.AGENTRIA_WARDROBE_API_URL;
-    const apiKey = process.env.AGENTRIA_WARDROBE_API_KEY || process.env.AGENTRIA_API_KEY;
+    const { endpoint, apiKey } = getWardrobeApiConfig();
     if (!endpoint || !apiKey) {
       return Response.json(
         { message: '옷장 API 연결 정보가 설정되지 않았습니다.' },

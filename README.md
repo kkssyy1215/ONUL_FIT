@@ -15,7 +15,7 @@ pnpm dev
 
 옷차림 추천은 `/api/recommend/`에서 처리합니다. `AGENTRIA_API_URL`을 설정하면 에이전트리아에 배포한 오늘핏 어빌리티 API로 요청을 전달합니다. URL이 비어 있거나 일부 AI 조합이 실패하면 동일한 입력 구조를 사용하는 로컬 규칙 기반 추천이 동작합니다.
 
-옷 추가는 `/api/wardrobe/`를 통해 `AGENTRIA_WARDROBE_API_URL`로 전달됩니다. 서버는 입력한 이름과 카테고리를 Ability Input의 `Name`, `category`에 넣고, 저장 완료 후 반환된 전체 `wardrobeItems`로 화면의 옷장을 동기화합니다. 두 어빌리티가 같은 API 키를 사용하면 `AGENTRIA_WARDROBE_API_KEY`는 비워둘 수 있습니다.
+옷장 목록은 페이지 진입 시 `/api/wardrobe/`의 GET으로 DB에서 직접 읽어옵니다. 옷 추가는 같은 경로의 POST를 통해 `AGENTRIA_WARDROBE_API_URL`로 전달됩니다. 목록 조회 Ability가 별도 발급된 경우 `AGENTRIA_WARDROBE_LIST_API_URL`에 URL을 설정하고, 그렇지 않으면 저장 API URL을 사용합니다. 서버는 입력한 이름과 카테고리를 Ability Input의 `Name`, `category`에 넣고, 저장 완료 후 반환된 전체 `wardrobeItems`로 화면의 옷장을 동기화합니다. 두 어빌리티가 같은 API 키를 사용하면 `AGENTRIA_WARDROBE_API_KEY`는 비워둘 수 있습니다.
 
 ## 기상청 API 설정
 
