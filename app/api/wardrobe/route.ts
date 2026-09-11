@@ -19,6 +19,11 @@ type WardrobeResult = {
   wardrobeCount: number;
 };
 
+type WardrobeInputItem = {
+  name: string;
+  category: string;
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -39,7 +44,7 @@ function asStringArray(value: unknown) {
   }
 }
 
-function asBoolean(value: unknown, fallback = false) {
+function asBoolean(value: unknown, fallback = false): boolean {
   if (typeof value === 'boolean') return value;
   if (Array.isArray(value)) {
     return value.length > 0 ? asBoolean(value[0], fallback) : fallback;
@@ -91,7 +96,7 @@ function delay(milliseconds: number) {
 async function runWardrobeAbility(
   endpoint: string,
   apiKey: string,
-  params: Record<string, string>,
+  params: Record<string, unknown>,
 ) {
   // Workerd/Vinext의 URLSearchParams·FormData 직렬화는 Agentria에서
   // 간헐적으로 500을 일으킬 수 있어 multipart 본문을 직접 만듭니다.
@@ -172,7 +177,7 @@ async function runWardrobeAbility(
 
 async function runWardrobeThroughNodeProxy(
   proxyUrl: string,
-  params: Record<string, string>,
+  params: Record<string, unknown>,
 ) {
   const response = await resilientFetch(
     `${proxyUrl.replace(/\/+$/, '')}/run`,
@@ -215,7 +220,7 @@ function findWardrobeResult(value: unknown, depth = 0): Record<string, unknown> 
   }
 
   if (!isRecord(value)) return null;
-  if (Array.isArray(value.wardrobeItems)) return value;
+  if (Array.isArray(value.wardrobeItems) || Array.isArray(value.wardrobe_items)) return value;
 
   for (const key of ['result', 'output', 'data', 'results', 'value']) {
     const found = findWardrobeResult(value[key], depth + 1);
@@ -228,7 +233,11 @@ function normalizeWardrobeResult(raw: unknown): WardrobeResult {
   const result = findWardrobeResult(raw);
   if (!result) throw new Error('옷장 API 결과에서 wardrobeItems를 찾지 못했습니다.');
 
-  const rawItems = Array.isArray(result.wardrobeItems) ? result.wardrobeItems : [];
+  const rawItems = Array.isArray(result.wardrobeItems)
+    ? result.wardrobeItems
+    : Array.isArray(result.wardrobe_items)
+      ? result.wardrobe_items
+      : [];
   const wardrobeItems = rawItems.flatMap((value): WardrobeItem[] => {
     if (!isRecord(value)) return [];
 
@@ -243,9 +252,9 @@ function normalizeWardrobeResult(raw: unknown): WardrobeResult {
       name,
       category,
       color: asText(value.color, '#A0A0A0'),
-      styleTags: asStringArray(value.styleTags ?? value.style),
+      styleTags: asStringArray(value.styleTags ?? value.style_tags ?? value.style),
       warmthLevel: Number.isFinite(warmth) ? Math.max(1, Math.min(5, Math.round(warmth))) : 3,
-      activityTags: asStringArray(value.activityTags ?? value.activity),
+      activityTags: asStringArray(value.activityTags ?? value.activity_tags ?? value.activity),
       waterproof: asBoolean(value.waterproof),
       selected: asBoolean(value.selected, true),
     }];
@@ -280,8 +289,8 @@ export async function GET() {
     }
 
     // 저장과 조회가 통합된 동일한 Ability를 사용합니다.
-    // Ability 쪽에서 Name이 비어 있으면 db_list만 실행하도록 분기해야 합니다.
-    const params = { Name: '', category: '' };
+    // 빈 items 배열이면 저장 없이 기존 DB 목록만 반환합니다.
+    const params = { items: [] };
     const raw = nodeProxyUrl
       ? await runWardrobeThroughNodeProxy(nodeProxyUrl, params)
       : await runWardrobeAbility(endpoint, apiKey, params);
@@ -303,16 +312,35 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const input = await request.json() as { name?: unknown; category?: unknown };
-    const name = asText(input.name);
-    const category = asText(input.category);
+    const input = await request.json() as { items?: unknown };
     const allowedCategories = ['상의', '하의', '아우터', '신발', '액세서리'];
+    const rawItems = Array.isArray(input.items) ? input.items : [];
 
-    if (!name || !allowedCategories.includes(category)) {
+    if (rawItems.length === 0 || rawItems.length > 5) {
       return Response.json(
-        { message: '옷 이름과 올바른 카테고리를 입력해 주세요.' },
+        { message: '옷은 한 번에 1벌부터 최대 5벌까지 추가할 수 있어요.' },
         { status: 400 },
       );
+    }
+
+    const items: WardrobeInputItem[] = [];
+    for (const value of rawItems) {
+      if (!isRecord(value)) {
+        return Response.json(
+          { message: '각 옷 정보는 이름과 카테고리를 포함해야 해요.' },
+          { status: 400 },
+        );
+      }
+
+      const name = asText(value.name);
+      const category = asText(value.category);
+      if (!name || !allowedCategories.includes(category)) {
+        return Response.json(
+          { message: '모든 옷의 이름과 올바른 카테고리를 입력해 주세요.' },
+          { status: 400 },
+        );
+      }
+      items.push({ name, category });
     }
 
     const { endpoint, apiKey, nodeProxyUrl } = getWardrobeApiConfig();
@@ -323,10 +351,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const params = {
-      Name: name,
-      category,
-    };
+    const params = { items };
     const raw = nodeProxyUrl
       ? await runWardrobeThroughNodeProxy(nodeProxyUrl, params)
       : await runWardrobeAbility(endpoint, apiKey, params);

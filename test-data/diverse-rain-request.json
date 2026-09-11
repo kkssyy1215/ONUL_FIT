@@ -1,0 +1,51 @@
+{
+  "weather": {
+    "location": "서울",
+    "coordinates": {
+      "latitude": 37.5665,
+      "longitude": 126.978
+    },
+    "updatedAt": "12:00",
+    "current": {
+      "temperature": 12,
+      "apparentTemperature": 8,
+      "humidity": 82,
+      "precipitation": 2,
+      "precipitationProbability": 80,
+      "windSpeed": 6.5,
+      "weatherCode": 61,
+      "label": "비가 와요",
+      "kind": "rain",
+      "uvIndex": 2,
+      "uvLabel": "낮음"
+    },
+    "daily": {
+      "maxTemperature": 14,
+      "minTemperature": 7
+    },
+    "hourly": [],
+    "weatherAlert": "",
+    "officialAlert": false
+  },
+  "profile": {
+    "gender": "female",
+    "style": "미니멀",
+    "activity": "출근",
+    "sensitivity": "추위를 많이 탐"
+  },
+  "wardrobe": [
+    { "id": "cream-knit", "name": "크림 코튼 니트", "category": "상의", "color": "#e8e2d3", "warmthLevel": 4, "waterproof": false, "styleTags": ["미니멀", "캐주얼"], "activityTags": ["출근", "데이트"], "selected": true },
+    { "id": "blue-shirt", "name": "블루 옥스퍼드 셔츠", "category": "상의", "color": "#9db7ca", "warmthLevel": 2, "waterproof": false, "styleTags": ["오피스", "미니멀"], "activityTags": ["출근"], "selected": true },
+    { "id": "gray-hoodie", "name": "그레이 기모 후드", "category": "상의", "color": "#aab3ba", "warmthLevel": 4, "waterproof": false, "styleTags": ["캐주얼", "스트릿"], "activityTags": ["등교", "여행"], "selected": true },
+    { "id": "charcoal-pants", "name": "차콜 스트레이트 팬츠", "category": "하의", "color": "#4b4d50", "warmthLevel": 3, "waterproof": false, "styleTags": ["미니멀", "오피스"], "activityTags": ["출근"], "selected": true },
+    { "id": "black-slacks", "name": "블랙 울 슬랙스", "category": "하의", "color": "#24272b", "warmthLevel": 4, "waterproof": false, "styleTags": ["오피스", "미니멀"], "activityTags": ["출근", "데이트"], "selected": true },
+    { "id": "beige-chino", "name": "베이지 코튼 치노", "category": "하의", "color": "#bcae91", "warmthLevel": 2, "waterproof": false, "styleTags": ["캐주얼"], "activityTags": ["등교", "여행"], "selected": true },
+    { "id": "rain-jacket", "name": "네이비 레인 재킷", "category": "아우터", "color": "#263951", "warmthLevel": 3, "waterproof": true, "styleTags": ["미니멀", "스포티"], "activityTags": ["출근", "여행"], "selected": true },
+    { "id": "camel-coat", "name": "카멜 울 코트", "category": "아우터", "color": "#9a7152", "warmthLevel": 5, "waterproof": false, "styleTags": ["오피스", "페미닌"], "activityTags": ["출근", "데이트"], "selected": true },
+    { "id": "black-padding", "name": "블랙 방수 경량 패딩", "category": "아우터", "color": "#25282d", "warmthLevel": 5, "waterproof": true, "styleTags": ["캐주얼", "스포티"], "activityTags": ["등교", "여행"], "selected": true },
+    { "id": "black-boots", "name": "블랙 방수 부츠", "category": "신발", "color": "#202226", "warmthLevel": 4, "waterproof": true, "styleTags": ["미니멀", "스트릿"], "activityTags": ["출근", "여행"], "selected": true },
+    { "id": "black-loafers", "name": "블랙 로퍼", "category": "신발", "color": "#24272b", "warmthLevel": 2, "waterproof": false, "styleTags": ["오피스", "미니멀"], "activityTags": ["출근", "데이트"], "selected": true },
+    { "id": "gray-running", "name": "그레이 방수 러닝화", "category": "신발", "color": "#7b858c", "warmthLevel": 2, "waterproof": true, "styleTags": ["스포티", "캐주얼"], "activityTags": ["운동", "여행"], "selected": true }
+  ],
+  "refreshToken": 1
+}

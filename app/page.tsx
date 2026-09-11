@@ -19,6 +19,7 @@ import {
   Shirt,
   Snowflake,
   Sun,
+  Trash2,
   Umbrella,
   UserRound,
   Wind,
@@ -98,6 +99,7 @@ type WardrobeResponse = {
   message?: string;
 };
 type FormSubmitEvent = { preventDefault: () => void };
+type WardrobeDraft = { draftId: number; name: string; category: string };
 type RecommendationOverrides = { gender?: 'female' | 'male'; style?: string; activity?: string; sensitivity?: string; wardrobe?: WardrobeItem[]; selectedItems?: string[]; refreshToken?: number };
 type WeatherRequester = (query: string, coordinates?: { latitude: number; longitude: number }, overrides?: RecommendationOverrides) => Promise<WeatherData>;
 
@@ -170,6 +172,11 @@ const styles = ['미니멀', '캐주얼', '오피스', '스트릿', '페미닌',
 const wardrobeCategories = ['상의', '하의', '아우터', '신발', '액세서리'];
 const wardrobeCategoryEmoji: Record<string, string> = { '상의': '👕', '하의': '👖', '아우터': '🧥', '신발': '👟', '액세서리': '👜' };
 
+function getWardrobeStyles(items: WardrobeItem[]) {
+  const ownedStyles = new Set(items.flatMap((item) => item.styleTags ?? []));
+  return styles.filter((item) => ownedStyles.has(item));
+}
+
 function inferOutfitCategory(itemName: string, index: number, items: WardrobeItem[]) {
   const ownedItem = items.find((item) => item.name === itemName);
   if (ownedItem) return ownedItem.category;
@@ -197,8 +204,9 @@ export default function Home() {
   const [selectedItems, setSelectedItems] = useState<string[]>([]);
   const [wardrobeSearch, setWardrobeSearch] = useState('');
   const [wardrobeColorFilters, setWardrobeColorFilters] = useState<Record<string, string>>({});
-  const [newItemName, setNewItemName] = useState('');
-  const [newItemCategory, setNewItemCategory] = useState('상의');
+  const [wardrobeDrafts, setWardrobeDrafts] = useState<WardrobeDraft[]>([
+    { draftId: 1, name: '', category: '상의' },
+  ]);
   const [showAddItem, setShowAddItem] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isRecommendationLoading, setIsRecommendationLoading] = useState(false);
@@ -207,6 +215,7 @@ export default function Home() {
   const [recommendationSource, setRecommendationSource] = useState<RecommendationResponse['source']>('local');
   const [recommendationCycle, setRecommendationCycle] = useState(0);
   const [storageReady, setStorageReady] = useState(false);
+  const nextWardrobeDraftId = useRef(2);
 
   const requestRecommendation = useCallback(async (
     nextWeather: WeatherData,
@@ -296,6 +305,9 @@ export default function Home() {
   const activeRecommendation = recommendations[activeRecommendationIndex] ?? recommendations[0] ?? defaultRecommendation;
   const recommendationRef = useRef(activeRecommendation);
   const normalizedWardrobeSearch = wardrobeSearch.trim().toLowerCase();
+  const availableStyles = getWardrobeStyles(wardrobe);
+  const firstAvailableStyle = availableStyles[0] ?? '';
+  const selectedStyleIsAvailable = availableStyles.includes(style);
   const visibleWardrobe = wardrobe.filter((item) => (
     !normalizedWardrobeSearch
     || item.name.toLowerCase().includes(normalizedWardrobeSearch)
@@ -307,6 +319,11 @@ export default function Home() {
     requestWeatherRef.current = requestWeather;
     recommendationRef.current = activeRecommendation;
   }, [activeRecommendation, requestWeather]);
+
+  useEffect(() => {
+    if (!firstAvailableStyle || selectedStyleIsAvailable) return;
+    queueMicrotask(() => setStyle(firstAvailableStyle));
+  }, [firstAvailableStyle, selectedStyleIsAvailable]);
 
   useEffect(() => {
     const saved = window.localStorage.getItem('onul-fit-preferences');
@@ -363,6 +380,11 @@ export default function Home() {
         nextSelected = savedSelectedItems
           ? nextWardrobe.filter((item) => savedSelectedItems?.includes(item.id)).map((item) => item.id)
           : nextWardrobe.filter((item) => item.selected !== false).map((item) => item.id);
+        const loadedStyles = getWardrobeStyles(nextWardrobe);
+        if (loadedStyles.length > 0 && !loadedStyles.includes(nextStyle)) {
+          nextStyle = loadedStyles[0];
+          setStyle(nextStyle);
+        }
         setSelectedItems(nextSelected);
       } catch {
         setMessage(
@@ -441,19 +463,62 @@ export default function Home() {
     setSelectedItems((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
   }
 
-  async function addWardrobeItem(event: FormSubmitEvent) {
+  function updateWardrobeDraft(
+    draftId: number,
+    field: 'name' | 'category',
+    value: string,
+  ) {
+    setWardrobeDrafts((current) => current.map((draft) => (
+      draft.draftId === draftId ? { ...draft, [field]: value } : draft
+    )));
+  }
+
+  function appendWardrobeDraft() {
+    setWardrobeDrafts((current) => {
+      if (current.length >= 5) return current;
+
+      const draft = {
+        draftId: nextWardrobeDraftId.current,
+        name: '',
+        category: '상의',
+      };
+      nextWardrobeDraftId.current += 1;
+      return [...current, draft];
+    });
+  }
+
+  function removeWardrobeDraft(draftId: number) {
+    setWardrobeDrafts((current) => (
+      current.length === 1
+        ? current
+        : current.filter((draft) => draft.draftId !== draftId)
+    ));
+  }
+
+  function resetWardrobeDrafts() {
+    nextWardrobeDraftId.current = 2;
+    setWardrobeDrafts([{ draftId: 1, name: '', category: '상의' }]);
+  }
+
+  async function addWardrobeItems(event: FormSubmitEvent) {
     event.preventDefault();
-    const name = newItemName.trim();
-    if (!name) return;
+    const items = wardrobeDrafts
+      .map((draft) => ({ name: draft.name.trim(), category: draft.category }))
+      .filter((item) => item.name);
+
+    if (items.length === 0) {
+      setMessage('추가할 옷 이름을 한 개 이상 입력해 주세요.');
+      return;
+    }
 
     setIsWardrobeSaving(true);
-    setMessage(`${name}을(를) 옷장에 저장하고 있어요.`);
+    setMessage(`${items.length}벌을 분석해 옷장에 저장하고 있어요.`);
 
     try {
       const response = await fetch('/api/wardrobe/', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, category: newItemCategory }),
+        body: JSON.stringify({ items }),
       });
       const result = await response.json() as WardrobeResponse;
       if (!response.ok) {
@@ -466,19 +531,25 @@ export default function Home() {
         .map((item) => item.id);
       setWardrobe(nextWardrobe);
       setSelectedItems(nextSelected);
-      setNewItemName('');
+      resetWardrobeDrafts();
       setShowAddItem(false);
 
       const nextCycle = recommendationCycle + 1;
+      const nextAvailableStyles = getWardrobeStyles(nextWardrobe);
+      const nextStyle = nextAvailableStyles.includes(style)
+        ? style
+        : nextAvailableStyles[0] ?? style;
+      if (nextStyle !== style) setStyle(nextStyle);
       setRecommendationCycle(nextCycle);
       const recommendationResult = await requestRecommendation(weather, {
+        style: nextStyle,
         wardrobe: nextWardrobe,
         selectedItems: nextSelected,
         refreshToken: nextCycle,
       });
       setMessage(
         recommendationResult.warning ||
-        `${name}을(를) 저장하고 DB 옷장으로 추천을 업데이트했어요.`,
+        `${items.length}벌을 처리하고 옷장 기준으로 추천을 업데이트했어요.`,
       );
     } catch (error) {
       setMessage(error instanceof Error ? error.message : '옷장에 저장하지 못했어요.');
@@ -500,6 +571,7 @@ export default function Home() {
   }
 
   const isBusy = isLoading || isRecommendationLoading || isWardrobeSaving;
+  const pendingWardrobeCount = wardrobeDrafts.filter((draft) => draft.name.trim()).length;
 
   return (
     <main className={`onul-app ${isBusy ? 'is-loading' : ''}`}>
@@ -511,7 +583,7 @@ export default function Home() {
         <nav className="main-nav" aria-label="주요 메뉴">
           <a className="active" href="#today">오늘</a>
           <a href="#wardrobe">내 옷장</a>
-          <a href="#profile">내 취향</a>
+          <a href="#profile">오늘 입을 옷</a>
         </nav>
         <div className="header-profile">
           <span className="sync-dot" />
@@ -634,7 +706,7 @@ export default function Home() {
 
         <section className="settings-grid">
           <article className="profile-card" id="profile">
-            <div className="section-heading"><div><span className="section-kicker">내 취향</span><h2>추천 기준</h2></div><span className="saved-label"><Check /> 자동 저장</span></div>
+            <div className="section-heading"><div><span className="section-kicker">오늘 입을 옷은?</span><h2>오늘의 선택</h2></div><span className="saved-label"><Check /> 자동 저장</span></div>
             <div className="preference-row">
               <span className="preference-label">성별</span>
               <RadioGroup className="choice-group" value={gender} onValueChange={(value) => setGender(value as 'female' | 'male')}>
@@ -643,16 +715,29 @@ export default function Home() {
               </RadioGroup>
             </div>
             <div className="preference-row stacked">
-              <span className="preference-label">즐겨 입는 스타일</span>
-              <RadioGroup className="style-options" value={style} onValueChange={(value) => setStyle(value as string)}>
-                {styles.map((item) => <label htmlFor={`style-${item}`} key={item} className={style === item ? 'style-choice selected' : 'style-choice'}><RadioGroupItem id={`style-${item}`} value={item} /><span>{item}</span></label>)}
-              </RadioGroup>
+              <span className="preference-label">오늘 입을 스타일</span>
+              <div className="style-selection">
+                {availableStyles.length > 0 ? (
+                  <RadioGroup
+                    className="style-options"
+                    value={selectedStyleIsAvailable ? style : firstAvailableStyle}
+                    onValueChange={(value) => {
+                      if (availableStyles.includes(value)) setStyle(value);
+                    }}
+                  >
+                    {availableStyles.map((item) => <label htmlFor={`style-${item}`} key={item} className={style === item ? 'style-choice selected' : 'style-choice'}><RadioGroupItem id={`style-${item}`} value={item} /><span>{item}</span></label>)}
+                  </RadioGroup>
+                ) : (
+                  <div className="style-empty">옷장에 스타일 정보가 있는 옷을 먼저 추가해 주세요.</div>
+                )}
+                <small className="style-helper">현재 옷장에 있는 스타일만 선택할 수 있어요.</small>
+              </div>
             </div>
             <div className="preference-row two-settings">
               <div className="setting-field"><label className="preference-label" htmlFor="activity">외출 목적</label><NativeSelect id="activity" value={activity} onChange={(event) => setActivity(event.target.value)}><NativeSelectOption value="출근">출근</NativeSelectOption><NativeSelectOption value="등교">등교</NativeSelectOption><NativeSelectOption value="데이트">데이트</NativeSelectOption><NativeSelectOption value="운동">운동</NativeSelectOption><NativeSelectOption value="여행">여행</NativeSelectOption></NativeSelect></div>
               <div className="setting-field"><label className="preference-label" htmlFor="sensitivity">추위 민감도</label><NativeSelect id="sensitivity" value={sensitivity} onChange={(event) => setSensitivity(event.target.value)}><NativeSelectOption value="더위를 많이 탐">더위를 많이 탐</NativeSelectOption><NativeSelectOption value="보통">보통</NativeSelectOption><NativeSelectOption value="추위를 많이 탐">추위를 많이 탐</NativeSelectOption></NativeSelect></div>
             </div>
-            <div className="profile-summary"><Shirt /><p><strong>{style} 스타일을 중심으로 추천해요.</strong><span>{activity}할 때 편하고 자연스러운 조합을 우선합니다.</span></p></div>
+            <div className="profile-summary"><Shirt /><p><strong>{availableStyles.length > 0 ? `${selectedStyleIsAvailable ? style : firstAvailableStyle} 스타일을 중심으로 추천해요.` : '선택할 수 있는 옷장 스타일이 없어요.'}</strong><span>{availableStyles.length > 0 ? `${activity}할 때 편하고 자연스러운 조합을 우선합니다.` : '옷장에 옷을 추가하면 선택 가능한 스타일이 표시됩니다.'}</span></p></div>
           </article>
 
           <article className="wardrobe-card" id="wardrobe">
@@ -667,7 +752,86 @@ export default function Home() {
                 <Button variant="outline" size="sm" disabled={isWardrobeSaving} onClick={() => setShowAddItem((current) => !current)}><Plus /> 옷 추가</Button>
               </div>
             </div>
-            {showAddItem && <form className="add-item-form" onSubmit={addWardrobeItem}><Input value={newItemName} disabled={isWardrobeSaving} onChange={(event) => setNewItemName(event.target.value)} placeholder="예: 그레이 후드 집업" aria-label="추가할 옷 이름" /><NativeSelect aria-label="추가할 옷 카테고리" value={newItemCategory} disabled={isWardrobeSaving} onChange={(event) => setNewItemCategory(event.target.value)}><NativeSelectOption value="상의">상의</NativeSelectOption><NativeSelectOption value="하의">하의</NativeSelectOption><NativeSelectOption value="아우터">아우터</NativeSelectOption><NativeSelectOption value="신발">신발</NativeSelectOption><NativeSelectOption value="액세서리">액세서리</NativeSelectOption></NativeSelect><Button type="submit" disabled={isWardrobeSaving}>{isWardrobeSaving ? '저장 중' : '옷장에 저장'}</Button></form>}
+            {showAddItem && (
+              <form className="add-item-form" onSubmit={addWardrobeItems}>
+                <div className="add-item-form-heading">
+                  <div>
+                    <strong>옷 한 번에 추가</strong>
+                    <span>최대 5벌을 입력한 뒤 한 번에 저장할 수 있어요.</span>
+                  </div>
+                  <span aria-live="polite">{pendingWardrobeCount} / 5벌 입력</span>
+                </div>
+                <div className="add-item-rows">
+                  {wardrobeDrafts.map((draft, index) => (
+                    <div className="add-item-row" key={draft.draftId}>
+                      <span className="add-item-number" aria-hidden="true">{index + 1}</span>
+                      <Input
+                        value={draft.name}
+                        maxLength={80}
+                        disabled={isWardrobeSaving}
+                        onChange={(event) => updateWardrobeDraft(draft.draftId, 'name', event.target.value)}
+                        placeholder="예: 검정색 두꺼운 방수 바람막이"
+                        aria-label={`${index + 1}번째 옷 이름`}
+                      />
+                      <NativeSelect
+                        aria-label={`${index + 1}번째 옷 카테고리`}
+                        value={draft.category}
+                        disabled={isWardrobeSaving}
+                        onChange={(event) => updateWardrobeDraft(draft.draftId, 'category', event.target.value)}
+                      >
+                        {wardrobeCategories.map((category) => (
+                          <NativeSelectOption value={category} key={category}>{category}</NativeSelectOption>
+                        ))}
+                      </NativeSelect>
+                      <Button
+                        className="add-item-remove"
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        disabled={isWardrobeSaving || wardrobeDrafts.length === 1}
+                        onClick={() => removeWardrobeDraft(draft.draftId)}
+                        aria-label={`${index + 1}번째 옷 입력 삭제`}
+                      >
+                        <Trash2 />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+                <div className="add-item-actions">
+                  <Button
+                    className="add-item-more"
+                    type="button"
+                    variant="outline"
+                    disabled={isWardrobeSaving || wardrobeDrafts.length >= 5}
+                    onClick={appendWardrobeDraft}
+                  >
+                    <Plus /> 옷 입력 추가
+                  </Button>
+                  <span>{wardrobeDrafts.length >= 5 ? '최대 5벌까지 추가할 수 있어요.' : `${5 - wardrobeDrafts.length}개 항목을 더 만들 수 있어요.`}</span>
+                  <div className="add-item-submit-actions">
+                    <Button
+                      className="add-item-cancel"
+                      type="button"
+                      variant="ghost"
+                      disabled={isWardrobeSaving}
+                      onClick={() => {
+                        resetWardrobeDrafts();
+                        setShowAddItem(false);
+                      }}
+                    >
+                      취소
+                    </Button>
+                    <Button
+                      className="add-item-submit"
+                      type="submit"
+                      disabled={isWardrobeSaving || pendingWardrobeCount === 0}
+                    >
+                      <Check /> {isWardrobeSaving ? '저장 중' : '옷장에 저장'}
+                    </Button>
+                  </div>
+                </div>
+              </form>
+            )}
             <div className="wardrobe-toolbar">
               <label className="wardrobe-search">
                 <Search aria-hidden="true" />
