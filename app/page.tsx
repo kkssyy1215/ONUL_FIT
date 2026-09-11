@@ -58,6 +58,8 @@ type Recommendation = {
   combinationId: string;
   strategy: 'balanced' | 'weather_first' | 'style_first';
   strategyLabel: string;
+  complete: boolean;
+  missingCategories: string[];
   headline: string;
   description: string;
   notice: string;
@@ -72,7 +74,27 @@ type RecommendationResponse = {
   warning?: string;
 };
 
-type WardrobeItem = { id: string; name: string; category: string; color: string };
+type WardrobeItem = {
+  id: string;
+  name: string;
+  category: string;
+  color: string;
+  styleTags?: string[];
+  warmthLevel?: number;
+  activityTags?: string[];
+  waterproof?: boolean;
+  selected?: boolean;
+};
+type WardrobeResponse = {
+  data: {
+    success: boolean;
+    message: string;
+    wardrobeItems: WardrobeItem[];
+    wardrobeCount: number;
+  };
+  source?: 'agentria';
+  message?: string;
+};
 type FormSubmitEvent = { preventDefault: () => void };
 type RecommendationOverrides = { gender?: 'female' | 'male'; style?: string; activity?: string; sensitivity?: string; wardrobe?: WardrobeItem[]; selectedItems?: string[]; refreshToken?: number };
 type WeatherRequester = (query: string, coordinates?: { latitude: number; longitude: number }, overrides?: RecommendationOverrides) => Promise<WeatherData>;
@@ -127,6 +149,8 @@ const defaultRecommendation: Recommendation = {
   combinationId: 'combo-1',
   strategy: 'balanced',
   strategyLabel: '균형 추천',
+  complete: true,
+  missingCategories: [],
   headline: '날씨에 맞는 조합을 준비 중이에요',
   description: '기온과 강수 가능성, 저장한 취향과 옷장을 함께 확인하고 있어요.',
   notice: '외출 전에 최신 날씨를 한 번 더 확인하세요.',
@@ -173,6 +197,7 @@ export default function Home() {
   const [showAddItem, setShowAddItem] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isRecommendationLoading, setIsRecommendationLoading] = useState(false);
+  const [isWardrobeSaving, setIsWardrobeSaving] = useState(false);
   const [message, setMessage] = useState('최신 날씨를 확인하고 있어요.');
   const [recommendationSource, setRecommendationSource] = useState<RecommendationResponse['source']>('local');
   const [recommendationCycle, setRecommendationCycle] = useState(0);
@@ -366,16 +391,50 @@ export default function Home() {
     setSelectedItems((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
   }
 
-  function addWardrobeItem(event: FormSubmitEvent) {
+  async function addWardrobeItem(event: FormSubmitEvent) {
     event.preventDefault();
     const name = newItemName.trim();
     if (!name) return;
-    const id = `item-${Date.now()}`;
-    setWardrobe((current) => [...current, { id, name, category: newItemCategory, color: itemColors[newItemCategory] }]);
-    setSelectedItems((current) => [...current, id]);
-    setNewItemName('');
-    setShowAddItem(false);
-    setMessage(`${name}을(를) 내 옷장에 추가했어요.`);
+
+    setIsWardrobeSaving(true);
+    setMessage(`${name}을(를) 옷장 DB에 저장하고 있어요.`);
+
+    try {
+      const response = await fetch('/api/wardrobe/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, category: newItemCategory }),
+      });
+      const result = await response.json() as WardrobeResponse;
+      if (!response.ok) {
+        throw new Error(result.message || '옷장에 저장하지 못했어요.');
+      }
+
+      const nextWardrobe = result.data.wardrobeItems;
+      const nextSelected = nextWardrobe
+        .filter((item) => item.selected !== false)
+        .map((item) => item.id);
+      setWardrobe(nextWardrobe);
+      setSelectedItems(nextSelected);
+      setNewItemName('');
+      setShowAddItem(false);
+
+      const nextCycle = recommendationCycle + 1;
+      setRecommendationCycle(nextCycle);
+      const recommendationResult = await requestRecommendation(weather, {
+        wardrobe: nextWardrobe,
+        selectedItems: nextSelected,
+        refreshToken: nextCycle,
+      });
+      setMessage(
+        recommendationResult.warning ||
+        `${name}을(를) 저장하고 DB 옷장으로 추천을 업데이트했어요.`,
+      );
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : '옷장에 저장하지 못했어요.');
+    } finally {
+      setIsWardrobeSaving(false);
+    }
   }
 
   async function refreshRecommendation() {
@@ -390,7 +449,7 @@ export default function Home() {
     }
   }
 
-  const isBusy = isLoading || isRecommendationLoading;
+  const isBusy = isLoading || isRecommendationLoading || isWardrobeSaving;
 
   return (
     <main className={`onul-app ${isBusy ? 'is-loading' : ''}`}>
@@ -407,7 +466,7 @@ export default function Home() {
         </nav>
         <div className="header-profile">
           <span className="sync-dot" />
-          <span className="sync-label">{isLoading ? '날씨 업데이트 중' : isRecommendationLoading ? 'AI 추천 분석 중' : '설정 저장됨'}</span>
+          <span className="sync-label">{isLoading ? '날씨 업데이트 중' : isWardrobeSaving ? '옷장 저장 중' : isRecommendationLoading ? 'AI 추천 분석 중' : '설정 저장됨'}</span>
           <span className="avatar">OF</span>
         </div>
       </header>
@@ -478,9 +537,10 @@ export default function Home() {
                   </button>
                 ))}
               </div>
-              <div className="outfit-kicker-row"><div className="section-kicker">오늘의 조합</div><div className="outfit-meta"><span className="match-badge">{activeRecommendation.matchScore}% 맞춤</span><span className="recommendation-source">{isRecommendationLoading ? 'AI 분석 중' : recommendationSource === 'agentria' ? 'AI 분석' : recommendationSource === 'local-fallback' ? '보완 추천' : '규칙 기반'}</span></div></div>
+              <div className="outfit-kicker-row"><div className="section-kicker">오늘의 조합</div><div className="outfit-meta"><span className={activeRecommendation.complete ? 'match-badge' : 'match-badge partial'}>{activeRecommendation.complete ? `${activeRecommendation.matchScore}% 맞춤` : `부분 추천 · ${activeRecommendation.matchScore}%`}</span><span className="recommendation-source">{isRecommendationLoading ? 'AI 분석 중' : recommendationSource === 'agentria' ? 'AI 분석' : recommendationSource === 'local-fallback' ? '보완 추천' : '규칙 기반'}</span></div></div>
               <h2>{activeRecommendation.headline}</h2>
               <p>{activeRecommendation.description}</p>
+              {!activeRecommendation.complete && activeRecommendation.missingCategories.length > 0 && <div className="partial-recommendation" role="status"><strong>옷장이 조금 부족해요</strong><span>{activeRecommendation.missingCategories.join(' · ')}를 추가하면 코디를 완성할 수 있어요.</span></div>}
               <ul className="outfit-item-list">{activeRecommendation.outfitItems.map((item) => <li key={item}>{item}</li>)}</ul>
               <div className="outfit-tags">{activeRecommendation.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>
               <button
@@ -544,8 +604,8 @@ export default function Home() {
           </article>
 
           <article className="wardrobe-card" id="wardrobe">
-            <div className="section-heading"><div><span className="section-kicker">내 옷장</span><h2>추천에 사용할 옷</h2></div><Button variant="outline" size="sm" onClick={() => setShowAddItem((current) => !current)}><Plus /> 옷 추가</Button></div>
-            {showAddItem && <form className="add-item-form" onSubmit={addWardrobeItem}><Input value={newItemName} onChange={(event) => setNewItemName(event.target.value)} placeholder="예: 그레이 후드 집업" aria-label="추가할 옷 이름" /><NativeSelect aria-label="추가할 옷 카테고리" value={newItemCategory} onChange={(event) => setNewItemCategory(event.target.value)}><NativeSelectOption value="상의">상의</NativeSelectOption><NativeSelectOption value="하의">하의</NativeSelectOption><NativeSelectOption value="아우터">아우터</NativeSelectOption><NativeSelectOption value="신발">신발</NativeSelectOption><NativeSelectOption value="액세서리">액세서리</NativeSelectOption></NativeSelect><Button type="submit">등록</Button></form>}
+            <div className="section-heading"><div><span className="section-kicker">내 옷장</span><h2>추천에 사용할 옷</h2></div><Button variant="outline" size="sm" disabled={isWardrobeSaving} onClick={() => setShowAddItem((current) => !current)}><Plus /> 옷 추가</Button></div>
+            {showAddItem && <form className="add-item-form" onSubmit={addWardrobeItem}><Input value={newItemName} disabled={isWardrobeSaving} onChange={(event) => setNewItemName(event.target.value)} placeholder="예: 그레이 후드 집업" aria-label="추가할 옷 이름" /><NativeSelect aria-label="추가할 옷 카테고리" value={newItemCategory} disabled={isWardrobeSaving} onChange={(event) => setNewItemCategory(event.target.value)}><NativeSelectOption value="상의">상의</NativeSelectOption><NativeSelectOption value="하의">하의</NativeSelectOption><NativeSelectOption value="아우터">아우터</NativeSelectOption><NativeSelectOption value="신발">신발</NativeSelectOption><NativeSelectOption value="액세서리">액세서리</NativeSelectOption></NativeSelect><Button type="submit" disabled={isWardrobeSaving}>{isWardrobeSaving ? '저장 중' : 'DB에 저장'}</Button></form>}
             <div className="wardrobe-groups">
               {wardrobeCategories.map((category) => {
                 const categoryItems = wardrobe.filter((item) => item.category === category);

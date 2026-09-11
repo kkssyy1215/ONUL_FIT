@@ -15,6 +15,8 @@ pnpm dev
 
 옷차림 추천은 `/api/recommend/`에서 처리합니다. `AGENTRIA_API_URL`을 설정하면 에이전트리아에 배포한 오늘핏 어빌리티 API로 요청을 전달합니다. URL이 비어 있거나 일부 AI 조합이 실패하면 동일한 입력 구조를 사용하는 로컬 규칙 기반 추천이 동작합니다.
 
+옷 추가는 `/api/wardrobe/`를 통해 `AGENTRIA_WARDROBE_API_URL`로 전달됩니다. 서버는 입력한 이름과 카테고리를 Ability Input의 `Name`, `category`에 넣고, 저장 완료 후 반환된 전체 `wardrobeItems`로 화면의 옷장을 동기화합니다. 두 어빌리티가 같은 API 키를 사용하면 `AGENTRIA_WARDROBE_API_KEY`는 비워둘 수 있습니다.
+
 ## 기상청 API 설정
 
 1. [기상청 단기예보 조회서비스](https://www.data.go.kr/data/15084084/openapi.do), 생활기상지수 조회서비스 V5, [기상특보 조회서비스](https://www.data.go.kr/data/15000415/openapi.do)에서 각각 활용신청을 합니다.
@@ -47,17 +49,19 @@ cp .env.example .env.local
 }
 ```
 
-서버는 이 값을 에이전트리아 Ability Input의 `location`, `gender`, `style`, `activity`, `sensitivity`, `refreshToken`, `weatherText`, `wardrobeText`로 변환합니다. `weatherText`의 풍속 단위는 실제 값과 동일한 `m/s`로 전달합니다.
+서버는 이 값을 에이전트리아 Ability Input의 `location`, `gender`, `style`, `activity`, `sensitivity`, `refreshToken`, `weatherText`로 변환합니다. 옷장 데이터는 어빌리티가 `오늘핏_옷장` 데이터 스토리지에서 직접 읽으며, `weatherText`의 풍속 단위는 실제 값과 동일한 `m/s`로 전달합니다.
 
 ## Agentria 추천 흐름
 
 1. 사용자 취향 세 요소로 균형 추천·날씨 우선·스타일 우선 조합을 만듭니다.
 2. 날씨 정보를 표준화하고 위험 요소와 준비물을 계산합니다.
 3. 세 조합을 세마포어 3으로 제한해 코디 추천 LLM Function을 병렬 호출합니다.
-4. LLM 결과의 의류 ID를 실제 `wardrobeText`와 대조해 검증합니다.
+4. LLM 결과의 의류 ID를 DB에서 읽은 실제 `wardrobeItems`와 대조해 검증합니다.
 5. 최종 응답의 `recommendations` 배열에 최대 세 개의 추천을 담습니다.
 
 웹 서버는 `finalResponse.recommendations`를 화면용 배열로 변환합니다. 일부 LLM 호출만 실패하면 실패한 조합만 로컬 추천으로 대체하고, 전체 어빌리티가 실패해도 세 개의 규칙 기반 추천을 반환합니다.
+
+옷 추가가 성공하면 옷장 API 응답의 `result.value.wardrobeItems`를 읽어 DB의 최신 목록을 표시하고, 메인 추천 API를 다시 호출합니다.
 
 ## 주요 기능
 

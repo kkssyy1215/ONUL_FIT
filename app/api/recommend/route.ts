@@ -6,6 +6,8 @@ type Recommendation = {
   combinationId: string;
   strategy: RecommendationStrategy;
   strategyLabel: string;
+  complete: boolean;
+  missingCategories: string[];
   headline: string;
   description: string;
   notice: string;
@@ -49,6 +51,14 @@ const recommendationStrategies: Array<{
   { combinationId: 'combo-2', strategy: 'weather_first', strategyLabel: '날씨 우선' },
   { combinationId: 'combo-3', strategy: 'style_first', strategyLabel: '스타일 우선' },
 ];
+
+const categoryLabels: Record<string, string> = {
+  top: '상의',
+  bottom: '하의',
+  outer: '아우터',
+  shoes: '신발',
+  accessory: '액세서리',
+};
 
 function categoryMatches(category: string, expected: string) {
   const aliases: Record<string, string[]> = {
@@ -136,6 +146,8 @@ function localRecommendation(
 
   return {
     ...variant,
+    complete: true,
+    missingCategories: [],
     headline,
     description,
     notice: rainy ? '비가 오는 시간대에는 미끄러운 길을 주의하세요.' : hot ? '한낮의 장시간 야외 활동은 피하고 물을 자주 마시세요.' : '시간대별 기온을 확인하고 얇은 겉옷을 조절하세요.',
@@ -157,14 +169,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function buildAgentriaInput(input: RecommendationInput) {
-  const categoryMap: Record<string, string> = {
-    상의: 'top',
-    하의: 'bottom',
-    아우터: 'outer',
-    신발: 'shoes',
-    액세서리: 'accessory',
-  };
-
   const location = input.weather.location || '현재 위치';
 
   // 에이전트리아의 날씨 표준화 Python 노드가 읽을 수 있도록
@@ -194,34 +198,6 @@ function buildAgentriaInput(input: RecommendationInput) {
     officialAlert: input.weather.officialAlert === true,
   });
 
-  const defaultWarmth: Record<string, number> = {
-    outer: 3,
-    top: 2,
-    bottom: 2,
-    shoes: 1,
-    accessory: 1,
-  };
-
-  const wardrobeText = JSON.stringify(
-    input.wardrobe
-      .filter((item) => item.selected)
-      .map((item) => {
-        const category = categoryMap[item.category] || item.category;
-
-        return {
-          id: item.id,
-          name: item.name,
-          category,
-          color: item.color || '',
-          warmthLevel: defaultWarmth[category] || 2,
-          waterproof: /방수|레인|rain|waterproof/i.test(item.name),
-          styleTags: [input.profile.style],
-          activityTags: [input.profile.activity],
-          active: true,
-        };
-      }),
-  );
-
   return {
     location,
     gender: input.profile.gender,
@@ -230,7 +206,6 @@ function buildAgentriaInput(input: RecommendationInput) {
     sensitivity: input.profile.sensitivity,
     refreshToken: Math.max(0, Math.floor(input.refreshToken || 0)),
     weatherText,
-    wardrobeText,
   };
 }
 
@@ -241,7 +216,6 @@ function parseJsonOrText(value: string): unknown {
     return value;
   }
 }
-
 function getRequestId(value: unknown): string | null {
   if (typeof value === 'string' && value.trim()) return value.trim();
   if (!isRecord(value)) return null;
@@ -383,7 +357,7 @@ function findFinalResponse(value: unknown, depth = 0): FinalResponse | null {
     return findFinalResponse(value.finalResponse, depth + 1);
   }
 
-  for (const key of ['output', 'result', 'data', 'results']) {
+  for (const key of ['output', 'result', 'data', 'results', 'value']) {
     const found = findFinalResponse(value[key], depth + 1);
     if (found) return found;
   }
@@ -437,7 +411,7 @@ function mapAgentriaResponse(raw: unknown, fallback: Recommendation[]) {
     );
     const candidate = matchedByIdentity ?? rawRecommendations[index];
     const localFallback = fallback[index] ?? fallback[0];
-    if (!isRecord(candidate) || candidate.success === false) return localFallback;
+    if (!isRecord(candidate)) return localFallback;
 
     const selectedItemNames = stringArray(candidate.selectedItemNames);
     const headline = typeof candidate.outfitTitle === 'string'
@@ -450,6 +424,13 @@ function mapAgentriaResponse(raw: unknown, fallback: Recommendation[]) {
 
     aiRecommendationCount += 1;
     const unmatchedCategories = stringArray(candidate.unmatchedCategories);
+    const missingCategories = unmatchedCategories.map(
+      (category) => categoryLabels[category] || category,
+    );
+    const complete =
+      candidate.success !== false &&
+      missingCategories.length === 0 &&
+      selectedItemNames.length > 0;
     const numericScore = Number(candidate.matchScore);
     const matchScore = Number.isFinite(numericScore)
       ? Math.max(0, Math.min(100, Math.round(numericScore)))
@@ -464,6 +445,8 @@ function mapAgentriaResponse(raw: unknown, fallback: Recommendation[]) {
     return {
       ...strategy,
       strategyLabel,
+      complete,
+      missingCategories,
       headline,
       description: description || localFallback.description,
       notice: cautionMessage || result.risk?.warningText || localFallback.notice,
