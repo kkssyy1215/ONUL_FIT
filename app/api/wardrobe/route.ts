@@ -41,11 +41,28 @@ function asStringArray(value: unknown) {
 
 function asBoolean(value: unknown, fallback = false) {
   if (typeof value === 'boolean') return value;
-  if (typeof value === 'string') {
-    if (['true', '1', 'yes', 'y', '네'].includes(value.trim().toLowerCase())) return true;
-    if (['false', '0', 'no', 'n', ''].includes(value.trim().toLowerCase())) return false;
+  if (Array.isArray(value)) {
+    return value.length > 0 ? asBoolean(value[0], fallback) : fallback;
   }
-  return value == null ? fallback : Boolean(value);
+  if (typeof value === 'number') {
+    if (value === 1) return true;
+    if (value === 0) return false;
+    return fallback;
+  }
+  if (typeof value === 'string') {
+    const text = value.trim();
+    const normalized = text.toLowerCase();
+    if (['true', '1', 'yes', 'y', '네'].includes(normalized)) return true;
+    if (['false', '0', 'no', 'n', '', '아니요'].includes(normalized)) return false;
+
+    try {
+      const parsed = JSON.parse(text) as unknown;
+      if (parsed !== value) return asBoolean(parsed, fallback);
+    } catch {
+      return fallback;
+    }
+  }
+  return fallback;
 }
 
 function parseJsonOrText(value: string): unknown {
