@@ -38,7 +38,17 @@ type RecommendationInput = {
     officialAlert?: boolean;
   };
   profile: { gender: 'female' | 'male'; style: string; activity: string; sensitivity: string };
-  wardrobe: Array<{ id: string; name: string; category: string; color?: string; selected: boolean }>;
+  wardrobe: Array<{
+    id: string;
+    name: string;
+    category: string;
+    color?: string;
+    selected: boolean;
+    warmthLevel?: number;
+    waterproof?: boolean;
+    styleTags?: string[];
+    activityTags?: string[];
+  }>;
   refreshToken?: number;
 };
 
@@ -237,11 +247,20 @@ async function runAgentriaAbility(
   apiKey: string,
   params: Record<string, string | number>,
 ) {
-  const headers = { 'X-API-KEY': apiKey };
-  // Agentria는 params_json 한 필드를 받으므로 boundary가 필요한 multipart보다
-  // 런타임 차이가 적은 URL-encoded form으로 전송합니다. 이 형식은 API가
-  // 동일하게 파싱하며 Cloudflare/Vinext 로컬 워커에서도 안정적으로 동작합니다.
-  const formBody = new URLSearchParams({ params_json: JSON.stringify(params) });
+  // Workerd/Vinext serializes FormData differently from Node and Agentria
+  // rejects that streamed request. A string body keeps the documented
+  // multipart shape while remaining identical in local and deployed workers.
+  const boundary = `----onul-fit-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const headers = {
+    'X-API-KEY': apiKey,
+    'Content-Type': `multipart/form-data; boundary=${boundary}`,
+  };
+  const formBody = [
+    `--${boundary}\r\n`,
+    'Content-Disposition: form-data; name="params_json"\r\n\r\n',
+    JSON.stringify(params),
+    `\r\n--${boundary}--\r\n`,
+  ].join('');
 
   // 실행 POST는 중복 전송을 피하기 위해 공통 재시도 래퍼와 분리합니다.
   const controller = new AbortController();
@@ -284,6 +303,10 @@ async function runAgentriaAbility(
 
     const statusText = await statusResponse.text();
     if (!statusResponse.ok) {
+      if (statusResponse.status === 404) {
+        await delay(1_000);
+        continue;
+      }
       throw new Error(`Agentria status error ${statusResponse.status}: ${statusText.slice(0, 240)}`);
     }
 
@@ -308,6 +331,28 @@ async function runAgentriaAbility(
   }
 
   throw new Error('Agentria 응답 대기 시간이 초과되었습니다.');
+}
+
+async function runAgentriaThroughNodeProxy(
+  proxyUrl: string,
+  params: Record<string, string | number>,
+) {
+  const response = await resilientFetch(
+    `${proxyUrl.replace(/\/+$/, '')}/run`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ params }),
+    },
+    { timeoutMs: 180_000, retries: 0 },
+  );
+
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(`Agentria proxy error ${response.status}: ${text.slice(0, 240)}`);
+  }
+
+  return parseJsonOrText(text);
 }
 
 type FinalResponse = {
@@ -478,7 +523,10 @@ export async function POST(request: Request) {
     if (!apiKey) throw new Error('AGENTRIA_API_KEY가 설정되지 않았습니다.');
 
     const agentriaInput = buildAgentriaInput(input);
-    const raw = await runAgentriaAbility(endpoint, apiKey, agentriaInput);
+    const nodeProxyUrl = process.env.AGENTRIA_NODE_PROXY_URL;
+    const raw = nodeProxyUrl
+      ? await runAgentriaThroughNodeProxy(nodeProxyUrl, agentriaInput)
+      : await runAgentriaAbility(endpoint, apiKey, agentriaInput);
     const mapped = mapAgentriaResponse(raw, fallback);
     const usedFallbackCount = recommendationStrategies.length - mapped.aiRecommendationCount;
     return Response.json({

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 import {
   ArrowRight,
   BriefcaseBusiness,
@@ -15,10 +15,12 @@ import {
   MapPin,
   Plus,
   RefreshCw,
+  Search,
   Shirt,
   Snowflake,
   Sun,
   Umbrella,
+  UserRound,
   Wind,
 } from 'lucide-react';
 
@@ -165,17 +167,37 @@ const defaultRecommendation: Recommendation = {
 };
 
 const initialWardrobe: WardrobeItem[] = [
-  { id: 'rain-jacket', name: '네이비 레인 재킷', category: '아우터', color: '#263951' },
-  { id: 'cream-knit', name: '크림 코튼 니트', category: '상의', color: '#e8e2d3' },
-  { id: 'charcoal-pants', name: '차콜 스트레이트 팬츠', category: '하의', color: '#4b4d50' },
-  { id: 'white-sneakers', name: '화이트 스니커즈', category: '신발', color: '#f2f0ea' },
-  { id: 'linen-shirt', name: '블루 린넨 셔츠', category: '상의', color: '#9db7ca' },
-  { id: 'black-loafers', name: '블랙 로퍼', category: '신발', color: '#24272b' },
+  { id: 'cream-knit', name: '크림 코튼 니트', category: '상의', color: '#e8e2d3', warmthLevel: 4, styleTags: ['미니멀', '캐주얼'], activityTags: ['출근', '데이트'] },
+  { id: 'blue-linen-shirt', name: '블루 린넨 셔츠', category: '상의', color: '#9db7ca', warmthLevel: 1, styleTags: ['미니멀', '오피스'], activityTags: ['출근', '여행'] },
+  { id: 'gray-hoodie', name: '그레이 후드 집업', category: '상의', color: '#aab3ba', warmthLevel: 3, styleTags: ['캐주얼', '스트릿'], activityTags: ['등교', '운동'] },
+  { id: 'white-tshirt', name: '화이트 기능성 반팔', category: '상의', color: '#f3f2ed', warmthLevel: 1, styleTags: ['스포티', '캐주얼'], activityTags: ['운동', '여행'] },
+  { id: 'charcoal-pants', name: '차콜 스트레이트 팬츠', category: '하의', color: '#4b4d50', warmthLevel: 3, styleTags: ['미니멀', '오피스'], activityTags: ['출근', '데이트'] },
+  { id: 'beige-chino', name: '베이지 코튼 치노', category: '하의', color: '#bcae91', warmthLevel: 2, styleTags: ['캐주얼', '미니멀'], activityTags: ['등교', '여행'] },
+  { id: 'black-jogger', name: '블랙 기능성 조거 팬츠', category: '하의', color: '#303338', warmthLevel: 2, styleTags: ['스포티', '스트릿'], activityTags: ['운동', '여행'] },
+  { id: 'rain-jacket', name: '네이비 레인 재킷', category: '아우터', color: '#263951', warmthLevel: 3, waterproof: true, styleTags: ['미니멀', '스포티'], activityTags: ['출근', '여행'] },
+  { id: 'camel-coat', name: '카멜 울 코트', category: '아우터', color: '#9a7152', warmthLevel: 5, styleTags: ['오피스', '페미닌'], activityTags: ['출근', '데이트'] },
+  { id: 'black-padding', name: '블랙 경량 패딩', category: '아우터', color: '#25282d', warmthLevel: 5, waterproof: true, styleTags: ['캐주얼', '스포티'], activityTags: ['등교', '여행'] },
+  { id: 'white-sneakers', name: '화이트 스니커즈', category: '신발', color: '#f2f0ea', warmthLevel: 1, styleTags: ['캐주얼', '미니멀'], activityTags: ['등교', '여행'] },
+  { id: 'black-loafers', name: '블랙 로퍼', category: '신발', color: '#24272b', warmthLevel: 2, styleTags: ['오피스', '미니멀'], activityTags: ['출근', '데이트'] },
+  { id: 'black-waterproof-boots', name: '블랙 방수 부츠', category: '신발', color: '#1f2328', warmthLevel: 4, waterproof: true, styleTags: ['미니멀', '스트릿'], activityTags: ['출근', '여행'] },
+  { id: 'running-shoes', name: '그레이 러닝화', category: '신발', color: '#7b858c', warmthLevel: 1, styleTags: ['스포티'], activityTags: ['운동', '여행'] },
+  { id: 'folding-umbrella', name: '검정 접이식 우산', category: '액세서리', color: '#34383d', warmthLevel: 1, waterproof: true, styleTags: ['미니멀'], activityTags: ['출근', '등교', '여행'] },
 ];
 
 const styles = ['미니멀', '캐주얼', '오피스', '스트릿', '페미닌', '스포티'];
 const itemColors: Record<string, string> = { '상의': '#9db7ca', '하의': '#53585f', '아우터': '#263951', '신발': '#e9e5da', '액세서리': '#cf8a64' };
 const wardrobeCategories = ['상의', '하의', '아우터', '신발', '액세서리'];
+const wardrobeCategoryEmoji: Record<string, string> = { '상의': '👕', '하의': '👖', '아우터': '🧥', '신발': '👟', '액세서리': '👜' };
+
+function inferOutfitCategory(itemName: string, index: number, items: WardrobeItem[]) {
+  const ownedItem = items.find((item) => item.name === itemName);
+  if (ownedItem) return ownedItem.category;
+  if (/신발|부츠|로퍼|스니커즈|운동화|샌들|shoes/i.test(itemName)) return '신발';
+  if (/아우터|재킷|자켓|코트|패딩|가디건|바람막이|outer/i.test(itemName)) return '아우터';
+  if (/하의|바지|팬츠|슬랙스|치노|스커트|bottom/i.test(itemName)) return '하의';
+  if (/가방|우산|모자|장갑|목도리|액세서리/i.test(itemName)) return '액세서리';
+  return index === 1 ? '하의' : index >= 3 ? '신발' : '상의';
+}
 
 const dateLabel = new Intl.DateTimeFormat('ko-KR', {
   year: 'numeric', month: 'long', day: 'numeric', weekday: 'long', timeZone: 'Asia/Seoul',
@@ -191,7 +213,9 @@ export default function Home() {
   const [activity, setActivity] = useState('출근');
   const [sensitivity, setSensitivity] = useState('보통');
   const [wardrobe, setWardrobe] = useState(initialWardrobe);
-  const [selectedItems, setSelectedItems] = useState(initialWardrobe.slice(0, 4).map((item) => item.id));
+  const [selectedItems, setSelectedItems] = useState(initialWardrobe.map((item) => item.id));
+  const [wardrobeSearch, setWardrobeSearch] = useState('');
+  const [wardrobeColorFilters, setWardrobeColorFilters] = useState<Record<string, string>>({});
   const [newItemName, setNewItemName] = useState('');
   const [newItemCategory, setNewItemCategory] = useState('상의');
   const [showAddItem, setShowAddItem] = useState(false);
@@ -279,6 +303,13 @@ export default function Home() {
   const requestWeatherRef = useRef<WeatherRequester>(requestWeather);
   const activeRecommendation = recommendations[activeRecommendationIndex] ?? recommendations[0] ?? defaultRecommendation;
   const recommendationRef = useRef(activeRecommendation);
+  const normalizedWardrobeSearch = wardrobeSearch.trim().toLowerCase();
+  const visibleWardrobe = wardrobe.filter((item) => (
+    !normalizedWardrobeSearch
+    || item.name.toLowerCase().includes(normalizedWardrobeSearch)
+    || item.category.toLowerCase().includes(normalizedWardrobeSearch)
+    || item.styleTags?.some((tag) => tag.toLowerCase().includes(normalizedWardrobeSearch))
+  ));
 
   useEffect(() => {
     requestWeatherRef.current = requestWeather;
@@ -292,21 +323,35 @@ export default function Home() {
     let nextActivity = '출근';
     let nextSensitivity = '보통';
     let nextWardrobe = initialWardrobe;
-    let nextSelected = initialWardrobe.slice(0, 4).map((item) => item.id);
+    let nextSelected = initialWardrobe.map((item) => item.id);
     let nextLocation = '서울';
 
     if (saved) {
       try {
         const parsed = JSON.parse(saved) as {
           gender?: 'female' | 'male'; style?: string; activity?: string; sensitivity?: string;
-          wardrobe?: WardrobeItem[]; selectedItems?: string[]; location?: string;
+          wardrobe?: WardrobeItem[]; selectedItems?: string[]; location?: string; wardrobeVersion?: number;
         };
         nextGender = parsed.gender ?? nextGender;
         nextStyle = parsed.style ?? nextStyle;
         nextActivity = parsed.activity ?? nextActivity;
         nextSensitivity = parsed.sensitivity ?? nextSensitivity;
-        nextWardrobe = parsed.wardrobe ?? nextWardrobe;
-        nextSelected = parsed.selectedItems ?? nextSelected;
+        if (parsed.wardrobeVersion === 2) {
+          nextWardrobe = parsed.wardrobe ?? nextWardrobe;
+          nextSelected = parsed.selectedItems ?? nextSelected;
+        } else {
+          // 기존 사용자가 추가한 옷은 보존하면서, 다양화된 기본 옷장을 한 번만 병합합니다.
+          const savedWardrobe = parsed.wardrobe ?? [];
+          const savedById = new Map(savedWardrobe.map((item) => [item.id, item]));
+          nextWardrobe = [
+            ...initialWardrobe.map((item) => savedById.get(item.id) ?? item),
+            ...savedWardrobe.filter((item) => !initialWardrobe.some((base) => base.id === item.id)),
+          ];
+          nextSelected = Array.from(new Set([
+            ...initialWardrobe.map((item) => item.id),
+            ...(parsed.selectedItems ?? []),
+          ]));
+        }
         nextLocation = parsed.location ?? nextLocation;
         queueMicrotask(() => {
           setGender(nextGender);
@@ -332,7 +377,7 @@ export default function Home() {
   useEffect(() => {
     if (!storageReady) return;
     window.localStorage.setItem('onul-fit-preferences', JSON.stringify({
-      gender, style, activity, sensitivity, wardrobe, selectedItems, location: weather.location,
+      wardrobeVersion: 2, gender, style, activity, sensitivity, wardrobe, selectedItems, location: weather.location,
     }));
   }, [storageReady, gender, style, activity, sensitivity, wardrobe, selectedItems, weather.location]);
 
@@ -455,9 +500,8 @@ export default function Home() {
     <main className={`onul-app ${isBusy ? 'is-loading' : ''}`}>
       <header className="app-header">
         <a className="brand" href="#top" aria-label="오늘핏 홈">
-          <span className="brand-word">ONUL</span>
-          <span className="brand-mark"><i /><i /><i /></span>
-          <span className="brand-word accent">FIT</span>
+          <span className="brand-emblem" aria-hidden="true"><span>O</span></span>
+          <span className="brand-lockup"><strong>오늘핏</strong><small>ONUL FIT</small></span>
         </a>
         <nav className="main-nav" aria-label="주요 메뉴">
           <a className="active" href="#today">오늘</a>
@@ -467,7 +511,7 @@ export default function Home() {
         <div className="header-profile">
           <span className="sync-dot" />
           <span className="sync-label">{isLoading ? '날씨 업데이트 중' : isWardrobeSaving ? '옷장 저장 중' : isRecommendationLoading ? 'AI 추천 분석 중' : '설정 저장됨'}</span>
-          <span className="avatar">OF</span>
+          <a className="profile-shortcut" href="#profile" aria-label="내 취향 설정으로 이동"><UserRound /><span>내 설정</span></a>
         </div>
       </header>
 
@@ -475,7 +519,7 @@ export default function Home() {
         <section className="page-intro">
           <div>
             <p className="date-label">{dateLabel}</p>
-            <h1>오늘, 이렇게 나가세요.</h1>
+            <h1>오늘의 추천핏</h1>
           </div>
           <form className="location-search" onSubmit={updateLocation}>
             <div className="location-field">
@@ -541,7 +585,10 @@ export default function Home() {
               <h2>{activeRecommendation.headline}</h2>
               <p>{activeRecommendation.description}</p>
               {!activeRecommendation.complete && activeRecommendation.missingCategories.length > 0 && <div className="partial-recommendation" role="status"><strong>옷장이 조금 부족해요</strong><span>{activeRecommendation.missingCategories.join(' · ')}를 추가하면 코디를 완성할 수 있어요.</span></div>}
-              <ul className="outfit-item-list">{activeRecommendation.outfitItems.map((item) => <li key={item}>{item}</li>)}</ul>
+              <ul className="outfit-item-list">{activeRecommendation.outfitItems.map((item, index) => {
+                const category = inferOutfitCategory(item, index, wardrobe);
+                return <li key={item}><span className="outfit-item-icon" aria-hidden="true">{wardrobeCategoryEmoji[category] ?? '👕'}</span><span><small>{category}</small><strong>{item}</strong></span></li>;
+              })}</ul>
               <div className="outfit-tags">{activeRecommendation.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>
               <button
                 className="text-link"
@@ -604,16 +651,41 @@ export default function Home() {
           </article>
 
           <article className="wardrobe-card" id="wardrobe">
-            <div className="section-heading"><div><span className="section-kicker">내 옷장</span><h2>추천에 사용할 옷</h2></div><Button variant="outline" size="sm" disabled={isWardrobeSaving} onClick={() => setShowAddItem((current) => !current)}><Plus /> 옷 추가</Button></div>
+            <div className="wardrobe-header">
+              <div>
+                <span className="section-kicker">내 옷장</span>
+                <h2>추천에 사용할 옷</h2>
+                <p>선택한 옷만 날씨와 취향에 맞춰 조합해요.</p>
+              </div>
+              <div className="wardrobe-header-actions">
+                <span><strong>{selectedItems.length}</strong> / {wardrobe.length}벌 선택</span>
+                <Button variant="outline" size="sm" disabled={isWardrobeSaving} onClick={() => setShowAddItem((current) => !current)}><Plus /> 옷 추가</Button>
+              </div>
+            </div>
             {showAddItem && <form className="add-item-form" onSubmit={addWardrobeItem}><Input value={newItemName} disabled={isWardrobeSaving} onChange={(event) => setNewItemName(event.target.value)} placeholder="예: 그레이 후드 집업" aria-label="추가할 옷 이름" /><NativeSelect aria-label="추가할 옷 카테고리" value={newItemCategory} disabled={isWardrobeSaving} onChange={(event) => setNewItemCategory(event.target.value)}><NativeSelectOption value="상의">상의</NativeSelectOption><NativeSelectOption value="하의">하의</NativeSelectOption><NativeSelectOption value="아우터">아우터</NativeSelectOption><NativeSelectOption value="신발">신발</NativeSelectOption><NativeSelectOption value="액세서리">액세서리</NativeSelectOption></NativeSelect><Button type="submit" disabled={isWardrobeSaving}>{isWardrobeSaving ? '저장 중' : 'DB에 저장'}</Button></form>}
-            <div className="wardrobe-groups">
+            <div className="wardrobe-toolbar">
+              <label className="wardrobe-search">
+                <Search aria-hidden="true" />
+                <Input value={wardrobeSearch} onChange={(event) => setWardrobeSearch(event.target.value)} placeholder="옷 이름, 카테고리, 스타일 검색" aria-label="옷장 검색" />
+              </label>
+              <span>{visibleWardrobe.length}벌 표시 중</span>
+            </div>
+            <div className="wardrobe-groups" aria-label="카테고리별 옷 목록">
               {wardrobeCategories.map((category) => {
-                const categoryItems = wardrobe.filter((item) => item.category === category);
-                if (categoryItems.length === 0) return null;
-                return <section className="wardrobe-group" key={category}><div className="wardrobe-group-heading"><strong>{category}</strong><span>{categoryItems.length}벌</span></div><div className="wardrobe-list">{categoryItems.map((item) => {
+                const categoryColors = Array.from(new Set(wardrobe.filter((item) => item.category === category).map((item) => item.color)));
+                const activeColor = wardrobeColorFilters[category] ?? '';
+                const categoryItems = visibleWardrobe.filter((item) => item.category === category && (!activeColor || item.color === activeColor));
+                return <section className="wardrobe-group" key={category}>
+                  <div className="wardrobe-group-heading"><div><strong>{category}</strong><small>{categoryItems.length}벌</small></div></div>
+                  <div className="wardrobe-color-filter" aria-label={`${category} 색상 필터`}>
+                    <button type="button" className={!activeColor ? 'active all-colors' : 'all-colors'} onClick={() => setWardrobeColorFilters((current) => ({ ...current, [category]: '' }))} aria-label={`${category} 전체 색상 보기`}>전체</button>
+                    {categoryColors.map((color) => <button key={color} type="button" className={activeColor === color ? 'active' : ''} style={{ '--item-color': color } as CSSProperties} onClick={() => setWardrobeColorFilters((current) => ({ ...current, [category]: current[category] === color ? '' : color }))} aria-label={`${category} ${color} 색상만 보기`} title={color}><span /></button>)}
+                  </div>
+                  <div className="wardrobe-list">{categoryItems.map((item) => {
                   const selected = selectedItems.includes(item.id);
-                  return <button key={item.id} type="button" className={selected ? 'wardrobe-item selected' : 'wardrobe-item'} onClick={() => toggleWardrobe(item.id)} aria-pressed={selected}><span className="item-color" style={{ backgroundColor: item.color }} /><span><strong>{item.name}</strong><small>{item.category}</small></span><span className="item-check">{selected && <Check />}</span></button>;
-                })}</div></section>;
+                  const warmthText = item.warmthLevel && item.warmthLevel >= 4 ? '따뜻함' : item.warmthLevel && item.warmthLevel <= 1 ? '가벼움' : '보통 두께';
+                  return <button key={item.id} type="button" className={selected ? 'wardrobe-item selected' : 'wardrobe-item'} onClick={() => toggleWardrobe(item.id)} aria-pressed={selected}><span className="item-color" style={{ backgroundColor: item.color }} /><span className="item-copy"><strong>{item.name}</strong><small>{[item.styleTags?.[0], warmthText, item.waterproof ? '방수' : null].filter(Boolean).join(' · ')}</small></span><span className="item-check" aria-hidden="true">{selected && <Check />}</span></button>;
+                })}{categoryItems.length === 0 && <div className="wardrobe-column-empty">해당 색상의 옷이 없어요.</div>}</div></section>;
               })}
             </div>
             <div className="wardrobe-footer"><span>{selectedItems.length}벌을 추천에 사용 중</span><Button onClick={refreshRecommendation} disabled={isBusy}><RefreshCw /> {isBusy ? '추천 만드는 중' : '추천 새로 받기'}</Button></div>

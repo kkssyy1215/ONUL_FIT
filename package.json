@@ -7,7 +7,9 @@
     "node": ">=22.13.0"
   },
   "scripts": {
-    "dev": "vinext dev",
+    "dev": "node scripts/dev.mjs",
+    "dev:web": "vinext dev",
+    "dev:proxy": "node scripts/agentria-proxy.mjs",
     "build": "vinext build",
     "start": "wrangler dev --config dist/server/wrangler.json",
     "lint": "oxlint",
