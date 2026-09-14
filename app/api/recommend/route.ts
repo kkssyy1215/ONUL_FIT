@@ -211,11 +211,11 @@ function buildAgentriaInput(input: RecommendationInput) {
   return {
     location,
     gender: input.profile.gender,
-    style: input.profile.style,
+    requested_style: input.profile.style,
     activity: input.profile.activity,
     sensitivity: input.profile.sensitivity,
-    refreshToken: Math.max(0, Math.floor(input.refreshToken || 0)),
-    weatherText,
+    refresh_token: Math.max(0, Math.floor(input.refreshToken || 0)),
+    weather_text: weatherText,
   };
 }
 
