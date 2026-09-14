@@ -368,6 +368,10 @@ type FinalResponse = {
     cautionMessage?: string;
     unmatchedCategories?: unknown[];
   };
+  // 실제 배포된 Agentria 어빌리티가 사용하는 현재 응답 스키마.
+  risk_data?: { warning_text?: string };
+  preparation_data?: { items?: unknown[]; message?: string };
+  missing_item_recommendations?: unknown[];
 };
 
 function findFinalResponse(value: unknown, depth = 0): FinalResponse | null {
@@ -394,12 +398,16 @@ function findFinalResponse(value: unknown, depth = 0): FinalResponse | null {
 
   if (!isRecord(value)) return null;
 
-  if (value.recommendations || value.outfit || value.preparation || value.risk) {
+  if (value.recommendations || value.outfit || value.preparation || value.risk || value.preparation_data || value.risk_data) {
     return value as FinalResponse;
   }
 
   if (value.finalResponse !== undefined) {
     return findFinalResponse(value.finalResponse, depth + 1);
+  }
+
+  if (value.final_respons !== undefined) {
+    return findFinalResponse(value.final_respons, depth + 1);
   }
 
   for (const key of ['output', 'result', 'data', 'results', 'value']) {
@@ -420,14 +428,20 @@ function mapAgentriaResponse(raw: unknown, fallback: Recommendation[], wardrobe?
   const result = findFinalResponse(raw);
   if (!result) return { recommendations: fallback, aiRecommendationCount: 0, missingItems: [] };
 
-  const preparationItems = stringArray(result.preparation?.items);
+  const preparationData = isRecord(result.preparation_data) ? result.preparation_data : result.preparation;
+  const preparationItems = stringArray(preparationData?.items);
+  const preparationMessage = typeof preparationData?.message === 'string' ? preparationData.message : undefined;
   const essentials = preparationItems.length > 0
     ? preparationItems.slice(0, 3).map((name, index): Essential => ({
       name,
-      reason: result.preparation?.message || '오늘 날씨에 필요한 준비물이에요.',
+      reason: preparationMessage || '오늘 날씨에 필요한 준비물이에요.',
       priority: index === 0 ? 'required' : 'recommended',
     }))
     : null;
+
+  const riskWarningText = typeof result.risk_data?.warning_text === 'string'
+    ? result.risk_data.warning_text
+    : result.risk?.warningText;
 
   const legacyRecommendation = result.outfit
     ? [{
@@ -451,20 +465,32 @@ function mapAgentriaResponse(raw: unknown, fallback: Recommendation[], wardrobe?
     const matchedByIdentity = rawRecommendations.find((candidate) =>
       isRecord(candidate) && (
         candidate.combinationId === strategy.combinationId ||
-        candidate.strategy === strategy.strategy
+        candidate.strategy === strategy.strategy ||
+        candidate.strategyLabel === strategy.strategyLabel ||
+        candidate.strategy_label === strategy.strategyLabel
       ),
     );
     const candidate = matchedByIdentity ?? rawRecommendations[index];
     const localFallback = fallback[index] ?? fallback[0];
     if (!isRecord(candidate)) return localFallback;
 
-    const selectedItemNames = stringArray(candidate.selectedItemNames);
-    const headline = typeof candidate.outfitTitle === 'string'
-      ? candidate.outfitTitle.trim()
-      : '';
-    const description = typeof candidate.outfitDescription === 'string'
-      ? candidate.outfitDescription.trim()
-      : '';
+    // 현재 배포된 어빌리티는 items: [{item_id, item_name, category}] 형태로 옷을 반환합니다.
+    const itemsField = Array.isArray(candidate.items) ? candidate.items : null;
+    const selectedItemNames = itemsField
+      ? itemsField
+        .map((item) => (isRecord(item) && typeof item.item_name === 'string' ? item.item_name.trim() : ''))
+        .filter((name) => name.length > 0)
+      : stringArray(candidate.selectedItemNames);
+
+    const reasonText = typeof candidate.reason === 'string' ? candidate.reason.trim() : '';
+    const outfitTitle = typeof candidate.outfitTitle === 'string' ? candidate.outfitTitle.trim() : '';
+    const outfitDescription = typeof candidate.outfitDescription === 'string' ? candidate.outfitDescription.trim() : '';
+
+    // reason 하나만 오는 스키마에서는 첫 문장을 헤드라인으로, 전체를 설명으로 사용합니다.
+    const firstSentence = reasonText.split(/(?<=[.!?])\s/)[0] || reasonText;
+    const headline = outfitTitle || firstSentence;
+    const description = outfitDescription || reasonText;
+
     if (!headline || selectedItemNames.length === 0) return localFallback;
 
     aiRecommendationCount += 1;
@@ -482,7 +508,9 @@ function mapAgentriaResponse(raw: unknown, fallback: Recommendation[], wardrobe?
       : Math.max(0, 95 - unmatchedCategories.length * 10);
     const strategyLabel = typeof candidate.strategyLabel === 'string' && candidate.strategyLabel.trim()
       ? candidate.strategyLabel.trim()
-      : strategy.strategyLabel;
+      : typeof candidate.strategy_label === 'string' && candidate.strategy_label.trim()
+        ? candidate.strategy_label.trim()
+        : strategy.strategyLabel;
     const cautionMessage = typeof candidate.cautionMessage === 'string'
       ? candidate.cautionMessage.trim()
       : '';
@@ -494,7 +522,7 @@ function mapAgentriaResponse(raw: unknown, fallback: Recommendation[], wardrobe?
       missingCategories,
       headline,
       description: description || localFallback.description,
-      notice: cautionMessage || result.risk?.warningText || localFallback.notice,
+      notice: cautionMessage || riskWarningText || localFallback.notice,
       matchScore,
       tags: [strategyLabel, result.request?.style, result.request?.activity].filter(
         (value): value is string => Boolean(value),
@@ -504,8 +532,25 @@ function mapAgentriaResponse(raw: unknown, fallback: Recommendation[], wardrobe?
     };
   });
 
-  let missingItems: Array<{ name: string; category: string; reason: string; priority: 'high' | 'medium' | 'low' }> = [];
-  if (wardrobe && recommendations.length > 0) {
+  const rawMissingItems = Array.isArray(result.missing_item_recommendations)
+    ? result.missing_item_recommendations
+    : [];
+  type MissingItem = { name: string; category: string; reason: string; priority: 'high' | 'medium' | 'low' };
+  const toPriority = (value: unknown): MissingItem['priority'] =>
+    value === 'high' || value === 'medium' || value === 'low' ? value : 'medium';
+
+  let missingItems: MissingItem[] = rawMissingItems
+    .filter((item): item is Record<string, unknown> => isRecord(item))
+    .map((item): MissingItem => ({
+      name: typeof item.item_name === 'string' ? item.item_name : '',
+      category: typeof item.category === 'string' ? item.category : '기타',
+      reason: typeof item.reason === 'string' ? item.reason : '지금 입고 있는 옷으로는 맞추기 어려운 아이템이에요.',
+      priority: toPriority(item.priority),
+    }))
+    .filter((item) => item.name.length > 0)
+    .slice(0, 3);
+
+  if (missingItems.length === 0 && wardrobe && recommendations.length > 0) {
     const wardrobeNames = new Set(wardrobe.map((item) => item.name.toLowerCase()));
     const allSuggestedItems = new Set<string>();
     recommendations.forEach((rec) => {
@@ -517,14 +562,10 @@ function mapAgentriaResponse(raw: unknown, fallback: Recommendation[], wardrobe?
     });
     missingItems = Array.from(allSuggestedItems)
       .slice(0, 3)
-      .map((name, index): typeof missingItems[0] => {
+      .map((name, index): MissingItem => {
         const guessedCategory = name.includes('신발') ? '신발' : name.includes('상의') || name.includes('셔츠') || name.includes('니트') ? '상의' : name.includes('하의') || name.includes('바지') ? '하의' : name.includes('아우터') || name.includes('코트') ? '아우터' : '액세서리';
-        return {
-          name,
-          category: guessedCategory,
-          reason: '지금 입고 있는 옷으로는 맞추기 어려운 아이템이에요.',
-          priority: index === 0 ? 'high' : index === 1 ? 'medium' : 'low',
-        };
+        const priority: MissingItem['priority'] = index === 0 ? 'high' : index === 1 ? 'medium' : 'low';
+        return { name, category: guessedCategory, reason: '지금 입고 있는 옷으로는 맞추기 어려운 아이템이에요.', priority };
       });
   }
   return { recommendations, aiRecommendationCount, missingItems };
@@ -550,7 +591,9 @@ export async function POST(request: Request) {
     const raw = nodeProxyUrl
       ? await runAgentriaThroughNodeProxy(nodeProxyUrl, agentriaInput)
       : await runAgentriaAbility(endpoint, apiKey, agentriaInput);
+    console.log('Agentria raw response:', JSON.stringify(raw));
     const mapped = mapAgentriaResponse(raw, fallback, input.wardrobe);
+    console.log('Mapped result - aiCount:', mapped.aiRecommendationCount, 'missingItems:', mapped.missingItems.length);
     const usedFallbackCount = recommendationStrategies.length - mapped.aiRecommendationCount;
     return Response.json({
       data: mapped.recommendations,

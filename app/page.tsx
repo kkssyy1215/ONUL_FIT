@@ -710,7 +710,7 @@ export default function Home() {
           {missingItems.length > 0 && (
             <article className="missing-items-card">
               <div className="section-heading compact"><div><span className="section-kicker">쇼핑 제안</span><h2>옷장에 없는 추천 아이템</h2></div><span className="count-label">{missingItems.length}</span></div>
-              <div className="essential-list">
+              <div className="missing-items-list">
                 {missingItems.map((item) => (
                   <div className={item.priority === 'high' ? 'essential-item required' : 'essential-item'} key={item.name}>
                     <span className="essential-icon" aria-hidden="true">{wardrobeCategoryEmoji[item.category] ?? '🛍️'}</span><p><strong>{item.name}</strong><small>{item.reason}</small></p><span>{item.priority === 'high' ? '구매 추천' : item.priority === 'medium' ? '있으면 좋아요' : '참고'}</span>
