@@ -486,9 +486,10 @@ function mapAgentriaResponse(raw: unknown, fallback: Recommendation[], wardrobe?
     const outfitTitle = typeof candidate.outfitTitle === 'string' ? candidate.outfitTitle.trim() : '';
     const outfitDescription = typeof candidate.outfitDescription === 'string' ? candidate.outfitDescription.trim() : '';
 
-    // reason 하나만 오는 스키마에서는 첫 문장을 헤드라인으로, 전체를 설명으로 사용합니다.
-    const firstSentence = reasonText.split(/(?<=[.!?])\s/)[0] || reasonText;
-    const headline = outfitTitle || firstSentence;
+    // reason은 문장이 한두 개뿐일 때가 많아 헤드라인과 겹치기 쉬우므로,
+    // 헤드라인은 핵심 아이템 이름으로 짧게 만들고 reason 전체는 설명으로만 사용합니다.
+    const itemBasedHeadline = selectedItemNames.slice(0, 2).join(' · ');
+    const headline = outfitTitle || (itemBasedHeadline ? `${itemBasedHeadline} 코디` : reasonText.split(/(?<=[.!?])\s/)[0] || reasonText);
     const description = outfitDescription || reasonText;
 
     if (!headline || selectedItemNames.length === 0) return localFallback;

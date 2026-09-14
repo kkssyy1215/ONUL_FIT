@@ -663,7 +663,7 @@ export default function Home() {
                 ))}
               </div>
               <div className="outfit-kicker-row"><div className="section-kicker">오늘의 조합</div><div className="outfit-meta"><span className={activeRecommendation.complete ? 'match-badge' : 'match-badge partial'}>{activeRecommendation.complete ? `${activeRecommendation.matchScore}% 맞춤` : `부분 추천 · ${activeRecommendation.matchScore}%`}</span><span className="recommendation-source">{isRecommendationLoading ? 'AI 분석 중' : recommendationSource === 'agentria' ? 'AI 분석' : recommendationSource === 'local-fallback' ? '보완 추천' : '규칙 기반'}</span></div></div>
-              <h2>{activeRecommendation.headline.split(/(?<=[.!?])/)[0]?.trim() || activeRecommendation.headline}</h2>
+              <h2>{activeRecommendation.headline}</h2>
               <p>{activeRecommendation.description}</p>
               {!activeRecommendation.complete && activeRecommendation.missingCategories.length > 0 && <div className="partial-recommendation" role="status"><strong>옷장이 조금 부족해요</strong><span>{activeRecommendation.missingCategories.join(' · ')}를 추가하면 코디를 완성할 수 있어요.</span></div>}
               <ul className="outfit-item-list">{activeRecommendation.outfitItems.map((item, index) => {
