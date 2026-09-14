@@ -416,9 +416,9 @@ function stringArray(value: unknown) {
     : [];
 }
 
-function mapAgentriaResponse(raw: unknown, fallback: Recommendation[]) {
+function mapAgentriaResponse(raw: unknown, fallback: Recommendation[], wardrobe?: Array<{ name: string; category: string }>) {
   const result = findFinalResponse(raw);
-  if (!result) return { recommendations: fallback, aiRecommendationCount: 0 };
+  if (!result) return { recommendations: fallback, aiRecommendationCount: 0, missingItems: [] };
 
   const preparationItems = stringArray(result.preparation?.items);
   const essentials = preparationItems.length > 0
@@ -504,7 +504,30 @@ function mapAgentriaResponse(raw: unknown, fallback: Recommendation[]) {
     };
   });
 
-  return { recommendations, aiRecommendationCount };
+  let missingItems: Array<{ name: string; category: string; reason: string; priority: 'high' | 'medium' | 'low' }> = [];
+  if (wardrobe && recommendations.length > 0) {
+    const wardrobeNames = new Set(wardrobe.map((item) => item.name.toLowerCase()));
+    const allSuggestedItems = new Set<string>();
+    recommendations.forEach((rec) => {
+      rec.outfitItems.forEach((itemName) => {
+        if (!wardrobeNames.has(itemName.toLowerCase())) {
+          allSuggestedItems.add(itemName);
+        }
+      });
+    });
+    missingItems = Array.from(allSuggestedItems)
+      .slice(0, 3)
+      .map((name, index): typeof missingItems[0] => {
+        const guessedCategory = name.includes('신발') ? '신발' : name.includes('상의') || name.includes('셔츠') || name.includes('니트') ? '상의' : name.includes('하의') || name.includes('바지') ? '하의' : name.includes('아우터') || name.includes('코트') ? '아우터' : '액세서리';
+        return {
+          name,
+          category: guessedCategory,
+          reason: '지금 입고 있는 옷으로는 맞추기 어려운 아이템이에요.',
+          priority: index === 0 ? 'high' : index === 1 ? 'medium' : 'low',
+        };
+      });
+  }
+  return { recommendations, aiRecommendationCount, missingItems };
 }
 
 export async function POST(request: Request) {
@@ -527,10 +550,11 @@ export async function POST(request: Request) {
     const raw = nodeProxyUrl
       ? await runAgentriaThroughNodeProxy(nodeProxyUrl, agentriaInput)
       : await runAgentriaAbility(endpoint, apiKey, agentriaInput);
-    const mapped = mapAgentriaResponse(raw, fallback);
+    const mapped = mapAgentriaResponse(raw, fallback, input.wardrobe);
     const usedFallbackCount = recommendationStrategies.length - mapped.aiRecommendationCount;
     return Response.json({
       data: mapped.recommendations,
+      missingItems: mapped.missingItems,
       source: mapped.aiRecommendationCount > 0 ? 'agentria' : 'local-fallback',
       warning: usedFallbackCount > 0
         ? `AI 추천 ${usedFallbackCount}개를 날씨·취향·옷장 기반 보완 추천으로 대체했어요.`

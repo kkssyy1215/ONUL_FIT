@@ -71,8 +71,10 @@ type Recommendation = {
   essentials: Essential[];
   outfitItems: string[];
 };
+type SuggestedItem = { name: string; category: string; reason: string; priority: 'high' | 'medium' | 'low' };
 type RecommendationResponse = {
   data: Recommendation[];
+  missingItems?: SuggestedItem[];
   source?: 'agentria' | 'local' | 'local-fallback';
   warning?: string;
 };
@@ -213,6 +215,7 @@ export default function Home() {
   const [isWardrobeSaving, setIsWardrobeSaving] = useState(false);
   const [message, setMessage] = useState('최신 날씨를 확인하고 있어요.');
   const [recommendationSource, setRecommendationSource] = useState<RecommendationResponse['source']>('local');
+  const [missingItems, setMissingItems] = useState<SuggestedItem[]>([]);
   const [recommendationCycle, setRecommendationCycle] = useState(0);
   const [storageReady, setStorageReady] = useState(false);
   const nextWardrobeDraftId = useRef(2);
@@ -245,6 +248,7 @@ export default function Home() {
       setRecommendations(result.data.length > 0 ? result.data : [defaultRecommendation]);
       setActiveRecommendationIndex(0);
       setRecommendationSource(result.source ?? 'local');
+      setMissingItems(result.missingItems ?? []);
       return result;
     } finally {
       setIsRecommendationLoading(false);
@@ -702,6 +706,19 @@ export default function Home() {
               ))}
             </div>
           </article>
+
+          {missingItems.length > 0 && (
+            <article className="missing-items-card">
+              <div className="section-heading compact"><div><span className="section-kicker">쇼핑 제안</span><h2>옷장에 없는 추천 아이템</h2></div><span className="count-label">{missingItems.length}</span></div>
+              <div className="essential-list">
+                {missingItems.map((item) => (
+                  <div className={item.priority === 'high' ? 'essential-item required' : 'essential-item'} key={item.name}>
+                    <span className="essential-icon" aria-hidden="true">{wardrobeCategoryEmoji[item.category] ?? '🛍️'}</span><p><strong>{item.name}</strong><small>{item.reason}</small></p><span>{item.priority === 'high' ? '구매 추천' : item.priority === 'medium' ? '있으면 좋아요' : '참고'}</span>
+                  </div>
+                ))}
+              </div>
+            </article>
+          )}
         </section>
 
         <section className="settings-grid">
