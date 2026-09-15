@@ -65,6 +65,16 @@ const locationMetadata: Record<string, { uvAreaNo: string; warningStnId: string 
   강릉: { uvAreaNo: '4215000000', warningStnId: '105' },
 };
 
+// 기상특보 API는 stnId(지방기상청)가 관할하는 여러 시/도를 함께 반환합니다.
+// 예: 서울(stnId 108)로 조회해도 강원도 특보가 섞여 옵니다.
+// 조회한 도시가 속한 시/도명을 텍스트 매칭에 사용해 무관한 지역 특보를 걸러냅니다.
+const locationProvince: Record<string, string> = {
+  서울: '서울', 부산: '부산', 인천: '인천', 대구: '대구', 광주: '광주',
+  대전: '대전', 울산: '울산', 세종: '세종', 제주: '제주',
+  수원: '경기', 성남: '경기', 고양: '경기',
+  청주: '충북', 전주: '전북', 춘천: '강원', 강릉: '강원',
+};
+
 function nearestKnownLocation(latitude: number, longitude: number) {
   return knownLocations.reduce((nearest, candidate) => {
     const nearestDistance = (nearest.latitude - latitude) ** 2 + (nearest.longitude - longitude) ** 2;
@@ -75,6 +85,13 @@ function nearestKnownLocation(latitude: number, longitude: number) {
 
 function getLocationMetadata(location: Location) {
   return locationMetadata[location.name] || locationMetadata[nearestKnownLocation(location.latitude, location.longitude).name] || locationMetadata.서울;
+}
+
+function getLocationProvince(location: Location) {
+  const knownName = location.name in locationProvince
+    ? location.name
+    : nearestKnownLocation(location.latitude, location.longitude).name;
+  return locationProvince[knownName] || locationProvince.서울;
 }
 
 function getKstParts(date = new Date()): KstParts {
@@ -299,32 +316,47 @@ const alertKeywords = [
   ['지진해일', 'tsunami'],
 ] as const;
 
-function parseWeatherAlert(items: Record<string, unknown>[]) {
-  const activeItems = items
-    .map((item) => {
-      const text = Object.values(item)
-        .filter((value): value is string | number => typeof value === 'string' || typeof value === 'number')
-        .join(' ');
-      return { item, text };
-    })
-    .filter(({ text }) => text && !/(해제|취소|종료)/.test(text));
+function getAnnounceTime(item: Record<string, unknown>) {
+  return Number(item.tmFc ?? item.t5 ?? 0);
+}
 
-  const matched = activeItems
-    .map(({ item, text }) => {
-      const keyword = alertKeywords.find(([label]) => text.includes(label));
-      if (!keyword || !/(주의보|경보|특보|예비특보)/.test(text)) return null;
-      const level = text.includes('경보') ? '경보' : text.includes('주의보') ? '주의보' : '특보';
-      const title = typeof item.title === 'string' ? item.title : `${keyword[0]} ${level}`;
-      return { title, flag: keyword[1], text };
-    })
-    .filter((value): value is { title: string; flag: string; text: string } => value !== null);
+function parseWeatherAlert(items: Record<string, unknown>[], province: string) {
+  // 기상특보 통보문 API는 조회 기간 내 발표된 모든 통보문(발표/해제/연장/변경)을
+  // 이력으로 반환합니다. 특보 종류별 "현재 상태"를 알려면 가장 최근 통보문만
+  // 봐야 하므로, 발표시각(tmFc) 내림차순으로 정렬한 뒤 종류별 최신 1건만 채택합니다.
+  const sorted = [...items].sort((a, b) => getAnnounceTime(b) - getAnnounceTime(a));
 
-  if (matched.length === 0) return { weatherAlert: '', alertFlags: [] as string[], officialAlert: false };
+  const seenFlags = new Set<string>();
+  const active: { title: string; flag: string }[] = [];
 
-  const uniqueFlags = Array.from(new Set(matched.map((value) => value.flag)));
+  for (const item of sorted) {
+    const text = Object.values(item)
+      .filter((value): value is string | number => typeof value === 'string' || typeof value === 'number')
+      .join(' ');
+    if (!text) continue;
+
+    const keyword = alertKeywords.find(([label]) => text.includes(label));
+    if (!keyword || !/(주의보|경보|특보|예비특보)/.test(text)) continue;
+    if (seenFlags.has(keyword[1])) continue; // 이미 더 최신 통보문으로 상태를 확정한 특보 종류
+    seenFlags.add(keyword[1]);
+
+    // stnId(지방기상청)는 여러 시/도를 함께 반환하므로, 조회 중인 지역과
+    // 무관한 시/도의 특보는 제외합니다.
+    if (!text.includes(province)) continue;
+
+    // 가장 최근 통보문이 해제/취소/종료라면 이 특보는 이제 비활성 상태입니다.
+    if (/(해제|취소|종료)/.test(text)) continue;
+
+    const level = text.includes('경보') ? '경보' : text.includes('주의보') ? '주의보' : '특보';
+    const title = typeof item.title === 'string' ? item.title : `${keyword[0]} ${level}`;
+    active.push({ title, flag: keyword[1] });
+  }
+
+  if (active.length === 0) return { weatherAlert: '', alertFlags: [] as string[], officialAlert: false };
+
   return {
-    weatherAlert: matched.map((value) => value.title).join(', '),
-    alertFlags: uniqueFlags,
+    weatherAlert: active.map((value) => value.title).join(', '),
+    alertFlags: active.map((value) => value.flag),
     officialAlert: true,
   };
 }
@@ -342,7 +374,7 @@ async function fetchWeatherAlert(serviceKey: string, location: Location, now: Ks
   url.searchParams.set('toTmFc', dateText(now));
 
   const payload = await fetchKmaJson(url, '기상특보');
-  return parseWeatherAlert(getKmaItems(payload));
+  return parseWeatherAlert(getKmaItems(payload), getLocationProvince(location));
 }
 
 function collectPoints(payload: unknown): KmaPoint[] {
