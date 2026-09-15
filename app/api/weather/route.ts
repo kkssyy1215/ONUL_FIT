@@ -337,12 +337,18 @@ function parseWeatherAlert(items: Record<string, unknown>[], province: string) {
 
     const keyword = alertKeywords.find(([label]) => text.includes(label));
     if (!keyword || !/(주의보|경보|특보|예비특보)/.test(text)) continue;
-    if (seenFlags.has(keyword[1])) continue; // 이미 더 최신 통보문으로 상태를 확정한 특보 종류
-    seenFlags.add(keyword[1]);
 
     // stnId(지방기상청)는 여러 시/도를 함께 반환하므로, 조회 중인 지역과
-    // 무관한 시/도의 특보는 제외합니다.
+    // 무관한 시/도의 통보문은 먼저 걸러냅니다. 이 필터를 "종류별 최신 1건"
+    // 판단보다 먼저 적용해야 합니다 — 그렇지 않으면 무관한 지역의 통보문이
+    // 먼저 seenFlags를 채워버려, 정작 우리 지역의 발표/해제 이력은
+    // 확인조차 못 하고 건너뛰게 됩니다.
     if (!text.includes(province)) continue;
+
+    // 같은 지역·같은 특보 종류는 발표시각(tmFc) 기준 가장 최근 통보문만
+    // "현재 상태"로 채택합니다.
+    if (seenFlags.has(keyword[1])) continue;
+    seenFlags.add(keyword[1]);
 
     // 가장 최근 통보문이 해제/취소/종료라면 이 특보는 이제 비활성 상태입니다.
     if (/(해제|취소|종료)/.test(text)) continue;
